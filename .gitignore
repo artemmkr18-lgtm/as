@@ -1,0 +1,13 @@
+.gradle/
+build/
+bin/
+run/
+.idea/
+.agents/
+
+*.class
+*.log
+*.tmp
+
+out/
+target/

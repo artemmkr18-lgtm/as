@@ -1,0 +1,107 @@
+{
+  "smooth_on": {
+    "sounds": [
+      "minar:smooth_on"
+    ]
+  },
+  "smooth_off": {
+    "sounds": [
+      "minar:smooth_off"
+    ]
+  },
+  "celestial_on": {
+    "sounds": [
+      "minar:celestial_on"
+    ]
+  },
+  "celestial_off": {
+    "sounds": [
+      "minar:celestial_off"
+    ]
+  },
+  "blop_on": {
+    "sounds": [
+      "minar:blop_on"
+    ]
+  },
+  "blop_off": {
+    "sounds": [
+      "minar:blop_off"
+    ]
+  },
+  "settingclose": {
+    "sounds": [
+      "minar:settingclose"
+    ]
+  },
+  "setting": {
+    "sounds": [
+      "minar:setting"
+    ]
+  },
+  "on": {
+    "sounds": [
+      "minar:on"
+    ]
+  },
+  "off": {
+    "sounds": [
+      "minar:off"
+    ]
+  },
+  "keyboard_1": {
+    "sounds": [
+      "minar:keyboard_sounds/1"
+    ]
+  },
+  "keyboard_2": {
+    "sounds": [
+      "minar:keyboard_sounds/2"
+    ]
+  },
+  "keyboard_3": {
+    "sounds": [
+      "minar:keyboard_sounds/3"
+    ]
+  },
+  "keyboard_4": {
+    "sounds": [
+      "minar:keyboard_sounds/4"
+    ]
+  },
+  "keyboard_5": {
+    "sounds": [
+      "minar:keyboard_sounds/5"
+    ]
+  },
+  "keyboard_6": {
+    "sounds": [
+      "minar:keyboard_sounds/6"
+    ]
+  },
+  "keyboard_7": {
+    "sounds": [
+      "minar:keyboard_sounds/7"
+    ]
+  },
+  "gui_open": {
+    "sounds": [
+      "minar:gui_open"
+    ]
+  },
+  "gui_close": {
+    "sounds": [
+      "minar:gui_close"
+    ]
+  },
+  "switchcategory": {
+    "sounds": [
+      "minar:switchcategory"
+    ]
+  },
+  "totem_pop": {
+    "sounds": [
+      "minar:totem_pop"
+    ]
+  }
+}

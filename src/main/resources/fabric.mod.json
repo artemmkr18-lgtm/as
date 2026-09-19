@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "id": "minar",
+  "version": "${version}",
+  "name": "Minar",
+  "description": "",
+  "authors": [],
+  "contact": {},
+  "license": "All-Rights-Reserved",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "ez.minar.Minar"
+    ]
+  },
+  "mixins": [
+    "ez.mixins.json"
+  ],
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": "${minecraft_version}"
+  }
+}

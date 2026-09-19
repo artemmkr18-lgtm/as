@@ -1,0 +1,131 @@
+plugins {
+    id 'fabric-loom' version '1.15.5'
+    id 'maven-publish'
+}
+
+version = project.mod_version
+group = project.maven_group
+
+base {
+    archivesName = project.archives_base_name
+}
+
+
+configurations {
+    proguard
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        name = "Modrinth"
+        url = "https://api.modrinth.com/maven"
+    }
+    flatDir {
+        dirs 'libs'
+    }
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+    modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+    compileOnly 'org.projectlombok:lombok:1.18.38'
+    annotationProcessor 'org.projectlombok:lombok:1.18.38'
+
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+
+    proguard 'com.guardsquare:proguard-base:7.7.0'
+
+    include name: 'figura-0.1.5+1.21.11'
+    modImplementation name: 'figura-0.1.5+1.21.11'
+    implementation files("libs/luaj-core-3.0.8-figura.jar")
+    implementation files("libs/luaj-jse-3.0.8-figura.jar")
+    implementation files("libs/nv-websocket-client-2.14.jar")
+}
+
+processResources {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    inputs.property "version", project.version
+    inputs.property "minecraft_version", project.minecraft_version
+    inputs.property "loader_version", project.loader_version
+    filteringCharset "UTF-8"
+
+    filesMatching("fabric.mod.json") {
+        expand "version": project.version,
+                "minecraft_version": project.minecraft_version,
+                "loader_version": project.loader_version
+    }
+
+    exclude "assets/minar/cosmetics/**"
+    from("src/main/resources/assets/minar/cosmetics") {
+        into "assets"
+    }
+}
+
+def targetJavaVersion = 21
+tasks.withType(JavaCompile).configureEach {
+    it.options.encoding = "UTF-8"
+    if (targetJavaVersion >= 10 || JavaVersion.current().isJava10Compatible()) {
+        it.options.release.set(targetJavaVersion)
+    }
+}
+
+java {
+    def javaVersion = JavaVersion.toVersion(targetJavaVersion)
+    if (JavaVersion.current() < javaVersion) {
+        toolchain.languageVersion = JavaLanguageVersion.of(targetJavaVersion)
+    }
+    withSourcesJar()
+}
+
+jar {
+    from("LICENSE") {
+        rename { "${it}_${project.archives_base_name}" }
+    }
+}
+
+tasks.register('obfuscatedJar', JavaExec) {
+    group = 'build'
+    description = 'Obfuscates the remapped mod JAR with li/l identifiers'
+    dependsOn tasks.named('remapJar')
+
+    classpath = configurations.proguard
+    mainClass = 'proguard.ProGuard'
+
+    def inputJar = tasks.named('remapJar').flatMap { it.archiveFile }
+    def outputJar = layout.buildDirectory.file("libs/${project.archives_base_name}-${project.version}-obfuscated.jar")
+    inputs.file(inputJar)
+    inputs.files('proguard-rules.pro', 'obfuscation/lil.txt')
+    outputs.file(outputJar)
+
+    doFirst {
+        file("${layout.buildDirectory.get().asFile}/obfuscation").mkdirs()
+        args = [
+                '-injars', inputJar.get().asFile.absolutePath,
+                '-outjars', outputJar.get().asFile.absolutePath,
+                "@${file('proguard-rules.pro').absolutePath}"
+        ]
+    }
+}
+
+tasks.named('build') {
+    dependsOn tasks.named('obfuscatedJar')
+}
+
+publishing {
+    publications {
+        create("mavenJava", MavenPublication) {
+            artifactId = project.archives_base_name
+            from components.java
+        }
+    }
+
+    // See https://docs.gradle.org/current/userguide/publishing_maven.html for information on how to set up publishing.
+    repositories {
+        // Add repositories to publish to here.
+        // Notice: This block does NOT have the same function as the block in the top level.
+        // The repositories here will be used for publishing your artifact, not for
+        // retrieving dependencies.
+    }
+}

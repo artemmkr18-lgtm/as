@@ -1,0 +1,8 @@
+-dontshrink
+-dontoptimize
+-dontobfuscate
+-dontpreverify
+-dontwarn
+-ignorewarnings
+-keepattributes *Annotation*,Signature,InnerClasses,EnclosingMethod
+-keep class ez.minar.** { *; }
