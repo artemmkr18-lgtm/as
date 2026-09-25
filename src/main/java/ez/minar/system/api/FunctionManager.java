@@ -21,7 +21,7 @@ public class FunctionManager {
 
         register(new Sprint(), new Speed(), new NoSlow(), new NoPush(), new Fly(), new AirStuck(), new ElytraFly(), new NoWeb(), new GuiMove(), new Scaffold(), new Spider(), new Blink());
 
-        register(new ClickGuiSettings(), new HUD(), new Crosshair(), new Particles(), new Trails(), new KillEffect(), new FireFly(), new JumpCircles(), new TargetESP(), new BlockOverlay(), new BlockESP(), new Predictions(), new ShaderSky(), new SwingAnimations(), new ViewModel(), new BeautifulHands(), new HandChams(), new HandShader(), new EntityESP(), new Fog(), new NoRender(), new Arrows(), new HitWave(), new FullBright(), new WorldRecolor(), new AntiInvisible(), new NameTags(), new ChinaHat(), new Optimization(), new WetWorld(), new LineGlyphs());
+        register(new ClickGuiSettings(), new HUD(), new Crosshair(), new Particles(), new Trails(), new KillEffect(), new FireFly(), new JumpCircles(), new TargetESP(), new BlockOverlay(), new BlockESP(), new Predictions(), new ShaderSky(), new SwingAnimations(), new ViewModel(), new BeautifulHands(), new HandChams(), new HandShader(), new EntityESP(), new SkeletonESP(), new Fog(), new NoRender(), new Arrows(), new HitWave(), new HitBubbles(), new ImpactRing(), new SmoothCamera(), new FullBright(), new WorldRecolor(), new AntiInvisible(), new NameTags(), new ChinaHat(), new Optimization(), new WetWorld(), new LineGlyphs(), new MotionBlur(), new Atmosphere(), new Chams());
 
         register(new NoDelay(), new AutoDuels(), new ElytraHelper(), new SwapSetting(), new ClickAction(), new NoInteract(), new ItemScroller(), new AutoTool(), new TapeMouse(), new NoSlotChange(), new InventoryCleaner(), new ChestStealer(), new AhHelper());
 
@@ -31,6 +31,7 @@ public class FunctionManager {
                 new AppleFarmer(), new AutoWood(), new AutoMine(), new AutoVillageTrade(), new ChorusFarm(), new AutoBuy(), new Unhook());
 
 
+        getFunction(HUD.class).forceEnable();
     }
 
     private static void register(Function... functionArray) {

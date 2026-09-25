@@ -26,6 +26,7 @@ public class TexturePipeline {
 
     private static RenderPipeline pipeline;
     private static GpuBuffer uniformBuffer;
+    private static ByteBuffer scratch;
     private static final int UNIFORM_SIZE = 256;
 
     public static void init() {
@@ -87,7 +88,11 @@ public class TexturePipeline {
         float b = (color & 0xFF) / 255.0f;
         float a = ((color >> 24) & 0xFF) / 255.0f;
 
-        ByteBuffer buffer = MemoryUtil.memAlloc(UNIFORM_SIZE);
+        if (scratch == null) {
+            scratch = MemoryUtil.memAlloc(UNIFORM_SIZE);
+        }
+        ByteBuffer buffer = scratch;
+        buffer.clear();
         buffer.putFloat(matrix.m00()).putFloat(matrix.m01()).putFloat(matrix.m02()).putFloat(matrix.m03());
         buffer.putFloat(matrix.m10()).putFloat(matrix.m11()).putFloat(matrix.m12()).putFloat(matrix.m13());
         buffer.putFloat(matrix.m20()).putFloat(matrix.m21()).putFloat(matrix.m22()).putFloat(matrix.m23());
@@ -102,7 +107,6 @@ public class TexturePipeline {
         buffer.flip();
         CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
         encoder.writeToBuffer(uniformBuffer.slice(), buffer);
-        MemoryUtil.memFree(buffer);
 
         GpuSampler sampler = RenderSystem.getSamplerCache().get(linearFilter ? FilterMode.LINEAR : FilterMode.NEAREST);
         Framebuffer framebuffer = MinecraftClient.getInstance().getFramebuffer();

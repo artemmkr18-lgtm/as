@@ -22,6 +22,9 @@ public class RenderUtil {
     private static float uiScale = 1f;
     private static float uiScaleAnchorX;
     private static float uiScaleAnchorY;
+    private static float popScale = 1f;
+    private static float popAnchorX;
+    private static float popAnchorY;
 
     public static void addOverrideTask(Runnable runnable) {
         OVERRIDE_TASKS.add(runnable);
@@ -40,12 +43,36 @@ public class RenderUtil {
     public static Matrix4f createProjection() {
         Matrix4f projection = new Matrix4f().ortho(0, (float) getFixedScaledWidth(),
                 (float) getFixedScaledHeight(), 0, -1000, 1000);
+        // Appended first so it lands outermost: the element's appear pop is applied on top of the
+        // user's drag scale, which keeps text and icons inside the card while it grows.
+        if (Math.abs(popScale - 1f) > 0.001f) {
+            projection.translate(popAnchorX, popAnchorY, 0f)
+                    .scale(popScale, popScale, 1f)
+                    .translate(-popAnchorX, -popAnchorY, 0f);
+        }
         if (Math.abs(uiScale - 1f) > 0.001f) {
             projection.translate(uiScaleAnchorX, uiScaleAnchorY, 0f)
                     .scale(uiScale, uiScale, 1f)
                     .translate(-uiScaleAnchorX, -uiScaleAnchorY, 0f);
         }
         return projection;
+    }
+
+    /**
+     * Rockstar's appear transform: the element scales about its own centre while it fades in
+     * (`0.5 + 0.5 * animation` about x+w/2, y+h/2 in UiInternal021). Separate from the drag scale
+     * because it animates per element and pivots on the element, not on its corner.
+     */
+    public static void setPopScale(float centerX, float centerY, float scale) {
+        popAnchorX = centerX;
+        popAnchorY = centerY;
+        popScale = Math.max(0.05f, scale);
+    }
+
+    public static void resetPopScale() {
+        popScale = 1f;
+        popAnchorX = 0f;
+        popAnchorY = 0f;
     }
 
     public static void setUiScale(float anchorX, float anchorY, float scale) {
@@ -58,18 +85,21 @@ public class RenderUtil {
         uiScale = 1f;
         uiScaleAnchorX = 0f;
         uiScaleAnchorY = 0f;
+        resetPopScale();
     }
 
     public static double transformUiX(double x) {
-        return uiScaleAnchorX + (x - uiScaleAnchorX) * uiScale;
+        double dragged = uiScaleAnchorX + (x - uiScaleAnchorX) * uiScale;
+        return popAnchorX + (dragged - popAnchorX) * popScale;
     }
 
     public static double transformUiY(double y) {
-        return uiScaleAnchorY + (y - uiScaleAnchorY) * uiScale;
+        double dragged = uiScaleAnchorY + (y - uiScaleAnchorY) * uiScale;
+        return popAnchorY + (dragged - popAnchorY) * popScale;
     }
 
     public static double transformUiSize(double size) {
-        return size * uiScale;
+        return size * uiScale * popScale;
     }
 
     public static float getScaleFactor() {
@@ -106,6 +136,11 @@ public class RenderUtil {
 
     public static void blur(float x, float y, float width, float height, float radius, float strength) {
         BlurPipeline.draw(createProjection(), x, y, width, height, radius, strength, Z_OVERRIDE);
+    }
+
+    /** Marks the frosted-glass backdrop as needing a fresh framebuffer copy for this frame. */
+    public static void beginBlurFrame() {
+        BlurPipeline.beginFrame();
     }
 
     public static float getDrawContextScale() {
@@ -208,10 +243,22 @@ public class RenderUtil {
         TexturePipeline.draw(createProjection(), x, y, size, tex.getGlTextureView(), ColorHelper.convertColor(color), radius, Z_OVERRIDE);
     }
 
+    public static void texture(float x, float y, float size, Identifier texture, float radius, Color color, float u, float v, float uvWidth, float uvHeight) {
+        var client = MinecraftClient.getInstance();
+        var tex = client.getTextureManager().getTexture(texture);
+        TexturePipeline.draw(createProjection(), x, y, size, tex.getGlTextureView(), ColorHelper.convertColor(color), radius, Z_OVERRIDE, u, v, uvWidth, uvHeight, false);
+    }
+
     public static void texture(float x, float y, float width, float height, Identifier texture, float radius, Color color) {
         var client = MinecraftClient.getInstance();
         var tex = client.getTextureManager().getTexture(texture);
         TexturePipeline.draw(createProjection(), x, y, width, height, tex.getGlTextureView(), ColorHelper.convertColor(color), radius, Z_OVERRIDE);
+    }
+
+    public static void texture(float x, float y, float width, float height, Identifier texture, float radius, Color color, float u, float v, float uvWidth, float uvHeight) {
+        var client = MinecraftClient.getInstance();
+        var tex = client.getTextureManager().getTexture(texture);
+        TexturePipeline.draw(createProjection(), x, y, width, height, tex.getGlTextureView(), ColorHelper.convertColor(color), radius, Z_OVERRIDE, u, v, uvWidth, uvHeight, false);
     }
 
     public static void glowCircle(float x, float y, float size, Color color) {

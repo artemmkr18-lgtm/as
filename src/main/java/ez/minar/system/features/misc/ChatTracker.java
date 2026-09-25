@@ -62,14 +62,14 @@ public class ChatTracker extends Function {
         boolean hasBuffWord = lower.contains("buff")
                 || lower.contains("effect")
                 || lower.contains("potion")
-                || lower.contains("\u0431\u0430\u0444")
-                || lower.contains("\u044d\u0444\u0444\u0435\u043a\u0442")
-                || lower.contains("\u0437\u0435\u043b\u044c");
+                || lower.contains("баф")
+                || lower.contains("эффект")
+                || lower.contains("зель");
 
         boolean hasLostWord = lower.contains("lost")
                 || lower.contains("expired")
-                || lower.contains("\u043f\u043e\u0442\u0435\u0440")
-                || lower.contains("\u0437\u0430\u043a\u043e\u043d\u0447");
+                || lower.contains("потер")
+                || lower.contains("законч");
 
         return hasBuffWord && hasLostWord;
     }
@@ -99,7 +99,7 @@ public class ChatTracker extends Function {
     }
 
     private void showLostMessage(String player, String itemName, int itemColor) {
-        if (mc.inGameHud == null) return;
+        if (mc == null) return;
 
         MutableText text = Text.literal("[")
                 .formatted(Formatting.DARK_GRAY)
@@ -111,6 +111,10 @@ public class ChatTracker extends Function {
                 .append(Text.literal(itemName).setStyle(Style.EMPTY.withColor(TextColor.fromRgb(itemColor))))
                 .append(Text.literal("\"").formatted(Formatting.DARK_GRAY));
 
-        mc.inGameHud.getChatHud().addMessage(text);
+        mc.execute(() -> {
+            if (mc.inGameHud != null) {
+                mc.inGameHud.getChatHud().addMessage(text);
+            }
+        });
     }
 }

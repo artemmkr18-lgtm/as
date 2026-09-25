@@ -2,7 +2,6 @@ package ez.minar.system.features.render;
 
 import ez.minar.system.api.Category;
 import ez.minar.system.api.Function;
-import ez.minar.system.api.FunctionManager;
 import ez.minar.system.api.NewFunction;
 import ez.minar.system.settings.impl.BooleanSetting;
 import ez.minar.system.settings.impl.ModeSetting;
@@ -19,43 +18,36 @@ public class Optimization extends Function {
     private final BooleanSetting cullProjectiles = new BooleanSetting("Снаряды", true);
     private final BooleanSetting cullDecor = new BooleanSetting("Рамки и картины", true);
     private final BooleanSetting cullArmorStands = new BooleanSetting("Стойки для брони", true);
-    private final BooleanSetting cullInvisible = new BooleanSetting("Невидимые сущности", true);
-    private final BooleanSetting cullAllFar = new BooleanSetting("Все дальние сущности", true);
-    private final NumberSetting entityDistance = new NumberSetting("Дистанция сущностей", 32.0, 8.0, 128.0, 1.0);
+    private final BooleanSetting cullAllFar = new BooleanSetting("Все дальние сущности", false);
+    private final NumberSetting entityDistance = new NumberSetting("Дистанция сущностей", 48.0, 16.0, 128.0, 4.0);
 
-    private final BooleanSetting noShadows = new BooleanSetting("Тени сущностей", true);
-    private final ModeSetting particlesMode = new ModeSetting("Частицы", "Меньше", "Все", "Меньше", "Нет");
-    private final BooleanSetting noWeather = new BooleanSetting("Осадки", true);
-    private final BooleanSetting noClouds = new BooleanSetting("Облака", true);
-    private final BooleanSetting noSky = new BooleanSetting("Небо", true);
+    private final BooleanSetting noShadows = new BooleanSetting("Тени сущностей", false);
+    private final ModeSetting particlesMode = new ModeSetting("Частицы", "Все", "Все", "Меньше", "Нет");
+    private final BooleanSetting noWeather = new BooleanSetting("Осадки", false);
+    private final BooleanSetting noClouds = new BooleanSetting("Облака", false);
+    private final BooleanSetting noSky = new BooleanSetting("Небо", false);
 
-    private final BooleanSetting cullBlockEntities = new BooleanSetting("Дальние блок-сущности", true);
+    private final BooleanSetting cullBlockEntities = new BooleanSetting("Дальние блок-сущности", false);
     private final NumberSetting blockEntityDistance = new NumberSetting("Дистанция блок-сущностей", 64.0, 16.0, 256.0, 4.0);
 
-    private final BooleanSetting throttleLightmap = new BooleanSetting("Обновление света", false);
-    private final NumberSetting lightmapInterval = new NumberSetting("Интервал света", 4.0, 2.0, 20.0, 1.0);
-
     private int particleCounter;
-    private int lightmapCounter;
 
     public Optimization() {
         Instance = this;
         setEnabled(false);
         addSettings(cullItems, cullXp, cullProjectiles, cullDecor, cullArmorStands, cullAllFar, entityDistance,
                 noShadows, particlesMode, noWeather, noClouds, noSky,
-                cullBlockEntities, blockEntityDistance,
-                throttleLightmap, lightmapInterval);
+                cullBlockEntities, blockEntityDistance);
     }
 
     @Override
-    public void onDisable() {
+    public void onEnable() {
+        super.onEnable();
         particleCounter = 0;
-        lightmapCounter = 0;
     }
 
     public boolean shouldCullEntity(Entity entity, double squaredDistance) {
-        if (mc.player == null || mc.world == null) return false;
-        if (entity == mc.player || entity.getType() == EntityType.PLAYER) return false;
+        if (entity == null) return false;
 
         double maxDistance = entityDistance.getValue();
         if (squaredDistance <= maxDistance * maxDistance) return false;
@@ -114,15 +106,6 @@ public class Optimization extends Function {
         return distance * distance;
     }
 
-    public boolean shouldUpdateLightmap() {
-        FullBright fullBright = FunctionManager.getFunction(FullBright.class);
-        if (fullBright != null && fullBright.isEnabled()) return true;
-
-        lightmapCounter++;
-        int interval = Math.max(1, (int) lightmapInterval.getValue());
-        return lightmapCounter % interval == 0;
-    }
-
     // === Статические хелперы для миксинов ===
 
     public static boolean shouldCullEntityStatic(Entity entity, double squaredDistance) {
@@ -165,11 +148,5 @@ public class Optimization extends Function {
         Optimization optimization = Instance;
         if (optimization == null || !optimization.isEnabled()) return Double.MAX_VALUE;
         return optimization.getBlockEntityMaxDistanceSq();
-    }
-
-    public static boolean shouldUpdateLightmapStatic() {
-        Optimization optimization = Instance;
-        if (optimization == null || !optimization.isEnabled()) return true;
-        return optimization.shouldUpdateLightmap();
     }
 }

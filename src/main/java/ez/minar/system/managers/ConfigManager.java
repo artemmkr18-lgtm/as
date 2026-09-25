@@ -286,7 +286,7 @@ public final class ConfigManager {
         } else if (setting instanceof ModeSetting modeSetting) {
             modeSetting.setMode(value);
         } else if (setting instanceof MultiSetting multiSetting) {
-            multiSetting.setEnabledOptions(value.isEmpty() ? Set.of() : Set.of(value.split(",")));
+            multiSetting.setEnabledOptions(value.isEmpty() ? Set.of() : java.util.Arrays.stream(value.split(",")).map(String::trim).collect(java.util.stream.Collectors.toSet()));
         } else if (setting instanceof KeybindSetting keybindSetting) {
             keybindSetting.setKeybind(parseInt(value, keybindSetting.getKeybind()));
         } else if (setting instanceof ColorSetting colorSetting) {

@@ -4,6 +4,9 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import ez.minar.system.autobuy.items.AutoBuyableItem;
+import ez.minar.system.autobuy.manager.AutoBuyManager;
+import ez.minar.system.autobuy.network.CommandSender;
 import ez.minar.system.autobuy.util.TimerUtil;
 import ez.minar.system.commands.CommandFeedback;
 import ez.minar.utils.helpers.AuctionHelper;
@@ -60,6 +63,9 @@ public class AutoBuyFlipperEngine {
     // Configurable parameters
     private boolean enabled = false;
     private String targetItem = "Изумрудный меч";
+    private int rotationIndex = 0;
+    private int marketSearchAttempts = 0;
+    private static final int MAX_SEARCH_ATTEMPTS = 3;
     private int buyDiscountPercent = 10; // 10% below market min price
     private int sellMarkupPercent = 10;  // 10% above base market price
     private long marketScanInterval = 4 * 60 * 1000L; // 4 minutes
@@ -108,6 +114,12 @@ public class AutoBuyFlipperEngine {
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
         if (enabled) {
+            selectRotationTarget(rotationIndex);
+            marketSearchAttempts = 0;
+            // Never snipe on a threshold left over from a previous session.
+            baseMarketPrice = 0L;
+            targetBuyPrice = 0L;
+            targetSellPrice = 0L;
             state = State.MARKET_SEARCH_SEND;
             lastMarketScanTime = 0L; // force immediate market analysis
             actionTimer.resetCounter();
@@ -134,6 +146,7 @@ public class AutoBuyFlipperEngine {
 
     public void setTargetItem(String targetItem) {
         this.targetItem = targetItem;
+        rotationIndex = Math.max(0, rotationPool().indexOf(targetItem));
         // reset prices on item change
         this.baseMarketPrice = 0L;
         this.targetBuyPrice = 0L;
@@ -144,6 +157,34 @@ public class AutoBuyFlipperEngine {
             actionTimer.resetCounter();
         }
         saveConfig();
+    }
+
+    /** Enabled items from the AutoBuy list, in registry order; empty means "keep the manual target". */
+    private List<String> rotationPool() {
+        List<String> names = new ArrayList<>();
+        for (AutoBuyableItem item : AutoBuyManager.getInstance().getAllItems()) {
+            if (item.isEnabled()) names.add(item.getDisplayName());
+        }
+        return names;
+    }
+
+    private void selectRotationTarget(int index) {
+        List<String> pool = rotationPool();
+        if (pool.isEmpty()) return;
+        rotationIndex = Math.floorMod(index, pool.size());
+        applyTarget(pool.get(rotationIndex));
+    }
+
+    private void advanceRotationTarget() {
+        selectRotationTarget(rotationIndex + 1);
+    }
+
+    private void applyTarget(String name) {
+        if (name == null || name.isEmpty() || name.equals(targetItem)) return;
+        targetItem = name;
+        baseMarketPrice = 0L;
+        targetBuyPrice = 0L;
+        targetSellPrice = 0L;
     }
 
     public int getBuyDiscountPercent() {
@@ -244,15 +285,23 @@ public class AutoBuyFlipperEngine {
         switch (state) {
             case MARKET_SEARCH_SEND -> {
                 if (actionTimer.hasTimeElapsed(350)) {
-                    // Send /ah search <targetItem>
-                    player.networkHandler.sendChatCommand("ah search " + targetItem);
+                    if (++marketSearchAttempts > MAX_SEARCH_ATTEMPTS) {
+                        CommandFeedback.message("[AutoBuy] Окно аукциона не открылось для '" + targetItem
+                                + "' за " + MAX_SEARCH_ATTEMPTS + " попыток — перехожу к следующему предмету",
+                                Formatting.RED);
+                        advanceRotationTarget();
+                        marketSearchAttempts = 1;
+                    }
+                    CommandFeedback.message("[AutoBuy] Запрос рынка: " + targetItem, Formatting.YELLOW);
+                    CommandSender.sendCommand(player, "/ah search " + targetItem);
                     actionTimer.resetCounter();
                     state = State.MARKET_SEARCH_WAIT;
                 }
             }
 
             case MARKET_SEARCH_WAIT -> {
-                if (mc.currentScreen instanceof GenericContainerScreen) {
+                // The server may answer with a mode/server picker first; only the lot page counts.
+                if (mc.currentScreen instanceof GenericContainerScreen screen && AuctionHelper.isAuctionScreen(screen)) {
                     actionTimer.resetCounter();
                     state = State.MARKET_SEARCH_READ;
                 }
@@ -261,7 +310,8 @@ public class AutoBuyFlipperEngine {
             case MARKET_SEARCH_READ -> {
                 // Wait 400ms for lots to load from server
                 if (actionTimer.hasTimeElapsed(400)) {
-                    if (mc.currentScreen instanceof GenericContainerScreen screen) {
+                    if (mc.currentScreen instanceof GenericContainerScreen screen && AuctionHelper.isAuctionScreen(screen)) {
+                        marketSearchAttempts = 0;
                         GenericContainerScreenHandler handler = screen.getScreenHandler();
                         long cheapest = Long.MAX_VALUE;
                         int foundCount = 0;
@@ -285,7 +335,7 @@ public class AutoBuyFlipperEngine {
                             baseMarketPrice = cheapest;
                             recalculatePrices();
                             lastMarketScanTime = System.currentTimeMillis();
-                            CommandFeedback.message("[AutoBuy] Рынок обновлен: мин. " + baseMarketPrice + "$ | Скупка <= "
+                            CommandFeedback.message("[AutoBuy] Рынок обновлен [" + targetItem + "]: мин. " + baseMarketPrice + "$ | Скупка <= "
                                     + targetBuyPrice + "$ | Продажа: " + targetSellPrice + "$", Formatting.GREEN);
                         } else {
                             CommandFeedback.message("[AutoBuy] Лоты '" + targetItem + "' не найдены на рынке, поиск продолжается...", Formatting.YELLOW);
@@ -306,7 +356,8 @@ public class AutoBuyFlipperEngine {
 
             case SNIPE_OPEN_SEND -> {
                 if (actionTimer.hasTimeElapsed(300)) {
-                    player.networkHandler.sendChatCommand("ah");
+                    // Bare /ah lands on the mode/server pickers; the search page is the lots page.
+                    CommandSender.sendCommand(player, "/ah search " + targetItem);
                     actionTimer.resetCounter();
                     state = State.SNIPE_WAIT;
                 }
@@ -332,6 +383,7 @@ public class AutoBuyFlipperEngine {
 
                 // Check 4-minute market recheck interval
                 if (lastMarketScanTime > 0L && System.currentTimeMillis() - lastMarketScanTime >= marketScanInterval) {
+                    advanceRotationTarget();
                     player.closeHandledScreen();
                     actionTimer.resetCounter();
                     state = State.MARKET_SEARCH_SEND;
@@ -411,7 +463,7 @@ public class AutoBuyFlipperEngine {
             case RESELL_SEND_COMMAND -> {
                 if (actionTimer.hasTimeElapsed(300)) {
                     long sellPrice = targetSellPrice > 0L ? targetSellPrice : (long) (lastBoughtPrice * 1.1);
-                    player.networkHandler.sendChatCommand("ah sell " + sellPrice);
+                    CommandSender.sendCommand(player, "/ah sell " + sellPrice);
                     totalSold++;
                     CommandFeedback.message("[AutoBuy] Выставлен на аукцион за " + sellPrice + "$!", Formatting.AQUA);
                     actionTimer.resetCounter();

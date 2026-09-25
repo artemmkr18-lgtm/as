@@ -34,7 +34,7 @@ public class TitleScreenMenuRenderer {
     
     private static final String ALT_ICON = "U";
     private static final String LANG_ICON = "LANG";
-    private static final String CLIENT_NAME = "Minar Client";
+    private static final String CLIENT_NAME = "Next Client";
     private static final Identifier LOGO_TEXTURE = Identifier.of("minar", "images/logo.png");
     private static final Identifier ICON_GLOBE = Identifier.of("minar", "icons/175_lucide_globe.png");
     private static final float CLOCK_Y = 150f;

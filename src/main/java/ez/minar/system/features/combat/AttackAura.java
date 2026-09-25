@@ -219,17 +219,7 @@ public class AttackAura extends Function {
         jumpCriticalWaitTicks = 0;
         auraAttacking = false;
         RotationManager.setKeepClientRenderPitch(false);
-        if (RotationManager.isActive()) {
-            if (resetMode.isEnabled("Silent")) {
-                releaseSilentRotation();
-            } else if (resetMode.isEnabled("ClientLook")) {
-                applyClientLookReset();
-            } else {
-                RotationManager.reset();
-            }
-        } else {
-            RotationManager.reset();
-        }
+        RotationManager.reset();
     }
 
     @EventHandler

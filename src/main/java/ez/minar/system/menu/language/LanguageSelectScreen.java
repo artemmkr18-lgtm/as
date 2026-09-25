@@ -100,6 +100,7 @@ public class LanguageSelectScreen extends Screen {
         renderBackground(context, mouseX, mouseY, delta);
 
         MsdfManager.init();
+        RenderUtil.beginBlurFrame();
 
         int scaledWidth = RenderUtil.getFixedScaledWidth();
         int scaledHeight = RenderUtil.getFixedScaledHeight();

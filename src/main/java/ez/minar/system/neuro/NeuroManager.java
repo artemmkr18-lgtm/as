@@ -2,6 +2,9 @@ package ez.minar.system.neuro;
 
 import com.mojang.authlib.GameProfile;
 import ez.minar.system.commands.CommandFeedback;
+import ez.minar.system.events.EventBus;
+import ez.minar.system.events.EventHandler;
+import ez.minar.system.events.impl.AttackEntityEvent;
 import ez.minar.system.managers.RotationManager.Rotation;
 import ez.minar.system.managers.UnhookManager;
 import net.fabricmc.loader.api.FabricLoader;
@@ -36,6 +39,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class NeuroManager {
     private static final String DATASET_EXTENSION = ".csv";
     private static final String MODEL_EXTENSION = ".model";
+    private static final String DATASET_HEADER_V3 = "# Minar Neuro dataset v3";
     private static final String DATASET_HEADER_V2 = "# Minar Neuro dataset v2";
     private static final String DATASET_HEADER_V1 = "# Minar Neuro dataset v1";
     private static final float MAX_ROTATION_DELTA = 30.0F;
@@ -54,6 +58,7 @@ public final class NeuroManager {
     private static final List<NeuralRotationModel.TrainingSample> recordingSamples = new ArrayList<>();
     private static final AtomicBoolean training = new AtomicBoolean();
     private static final AtomicBoolean cancelTrainingRequested = new AtomicBoolean();
+    private static volatile boolean attackTriggeredThisTick;
 
     private static Path directory;
     private static OtherClientPlayerEntity dummy;
@@ -87,6 +92,8 @@ public final class NeuroManager {
     private static float lastSeenPitch;
     private static boolean hasLastSeenRotation;
     private static volatile float lastHitProbability;
+    private static volatile float lastAttackProbability;
+    private static volatile MovementDecision predictedMovement = new MovementDecision(0.0F, 0.0F, false, false);
     private static int modelLostTicks;
     private static float wanderYaw;
     private static float wanderPitch;
@@ -95,15 +102,29 @@ public final class NeuroManager {
     private static int wanderRetargetTicks;
     private static boolean attackImminent;
 
+    public record MovementDecision(float forward, float strafe, boolean jump, boolean sprint) {
+    }
+
     private NeuroManager() {
     }
 
     public static void init() {
         directory = FabricLoader.getInstance().getGameDir().resolve("Minar").resolve("neuro");
+        EventBus.register(new NeuroEventListener());
+    }
+
+    public static final class NeuroEventListener {
+        @EventHandler
+        public void onAttack(AttackEntityEvent event) {
+            if (MC.player != null && event.getPlayer() == MC.player) {
+                attackTriggeredThisTick = true;
+            }
+        }
     }
 
     public static void tick() {
         if (!isRecording()) {
+            attackTriggeredThisTick = false;
             return;
         }
         if (MC.player == null || MC.world == null) {
@@ -113,8 +134,7 @@ public final class NeuroManager {
         if (dummy != null && dummy.isRemoved()) {
             dummy = null;
         }
-        // Запись на живой цели: умерла/ушла — берём ближайшую другую. Цели нет —
-        // тик пропускается (пауза), битые семплы в датасет не попадают.
+
         if (dummy == null && (recordTarget == null || recordTarget.isRemoved() || !recordTarget.isAlive())) {
             recordTarget = findRecordingTarget();
             if (recordTarget != null) {
@@ -134,11 +154,29 @@ public final class NeuroManager {
                         false
                 );
             }
+            attackTriggeredThisTick = false;
             return;
         }
 
         float cameraYaw = MC.player.getYaw();
         float cameraPitch = MC.player.getPitch();
+
+        // Сбор текущих действий игрока (удары, WASD, прыжки, спринт)
+        boolean mouseAttack = MC.options != null && MC.options.attackKey.isPressed();
+        boolean handSwing = MC.player.handSwinging && MC.player.handSwingTicks == 0;
+        boolean attacked = attackTriggeredThisTick || mouseAttack || handSwing;
+        attackTriggeredThisTick = false;
+
+        float forwardInput = 0.0F;
+        float strafeInput = 0.0F;
+        float jumpInput = 0.0F;
+        if (MC.player.input != null) {
+            forwardInput = MathHelper.clamp(MC.player.input.getMovementInput().y, -1.0F, 1.0F);
+            strafeInput = MathHelper.clamp(MC.player.input.getMovementInput().x, -1.0F, 1.0F);
+            jumpInput = MC.player.input.playerInput.jump() ? 1.0F : 0.0F;
+        }
+        float sprintInput = MC.player.isSprinting() ? 1.0F : 0.0F;
+        float attackValue = attacked ? 1.0F : 0.0F;
 
         if (!hasLastCamera) {
             hasLastCamera = true;
@@ -160,9 +198,20 @@ public final class NeuroManager {
                 float accelPitch = MathHelper.clamp(velPitch - pendingWindow[base + VEL_PITCH_INDEX],
                         -NeuralRotationModel.MAX_ACCEL, NeuralRotationModel.MAX_ACCEL);
                 float hit = doesRotationHit(recordTarget, cameraYaw, cameraPitch) ? 1.0F : 0.0F;
+
+                // Записываем полный датасет: ротация + попадание + клик + мувмент
                 recordingSamples.add(new NeuralRotationModel.TrainingSample(
                         pendingWindow,
-                        new float[]{accelYaw, accelPitch, hit}
+                        new float[]{
+                                accelYaw,
+                                accelPitch,
+                                hit,
+                                attackValue,
+                                forwardInput,
+                                strafeInput,
+                                jumpInput,
+                                sprintInput
+                        }
                 ));
             }
 
@@ -183,7 +232,7 @@ public final class NeuroManager {
             overlayTicks = 0;
             MC.inGameHud.setOverlayMessage(
                     Text.literal("Neuro: запись '" + recordingName + "' — " + recordingSamples.size()
-                                    + " семплов, цель: " + recordTarget.getName().getString())
+                                    + " семплов (камера + мувмент + удары)")
                             .formatted(Formatting.AQUA),
                     false
             );
@@ -230,9 +279,6 @@ public final class NeuroManager {
         activeModel = null;
         activeModelName = null;
 
-        // Приоритет — живая цель в радиусе 6 блоков: датасет с реальной наводки на
-        // движущегося игрока учит трекинг и реакции. Дамми (статичный) — только
-        // фолбэк, когда рядом никого нет.
         LivingEntity liveTarget = findRecordingTarget();
         if (liveTarget == null) {
             Vec3d look = MC.player.getRotationVec(1.0F);
@@ -259,15 +305,10 @@ public final class NeuroManager {
         recordTarget = liveTarget != null ? liveTarget : dummy;
         recordingName = name;
         overlayTicks = 0;
-        if (liveTarget != null) {
-            CommandFeedback.message("Запись Neuro '" + name + "' начата. Цель: "
-                            + liveTarget.getName().getString()
-                            + ". Водите по ней прицел естественно — пишется ВАША наводка.",
-                    Formatting.GREEN);
-        } else {
-            CommandFeedback.message("Запись Neuro '" + name + "' начата. Наводитесь на дамми; удары не записываются.",
-                    Formatting.GREEN);
-        }
+        CommandFeedback.message("Запись полного боя Neuro '" + name + "' начата. Цель: "
+                        + recordTarget.getName().getString()
+                        + ". Двигайтесь (WASD, прыжки, спринт), цельтесь и бейте — пишется полный датасет боя.",
+                Formatting.GREEN);
         return true;
     }
 
@@ -293,7 +334,7 @@ public final class NeuroManager {
             writeDataset(datasetPath(name), samples);
             Files.deleteIfExists(modelPath(name));
             CommandFeedback.message("Датасет '" + name + "' сохранён: " + samples.size()
-                    + " семплов. Запуск: .neuro play " + name, Formatting.GREEN);
+                    + " семплов (камера, удары, WASD). Запуск: .neuro play " + name, Formatting.GREEN);
             return true;
         } catch (IOException exception) {
             CommandFeedback.message("Не удалось сохранить датасет: " + exception.getMessage(), Formatting.RED);
@@ -346,7 +387,7 @@ public final class NeuroManager {
                     activeModel = loadedModel;
                     activeModelName = name;
                     resetInference();
-                    CommandFeedback.message("Neuro-модель '" + name + "' готова к работе! Выберите ротацию Neuro в ауре.",
+                    CommandFeedback.message("Neuro-модель '" + name + "' (ротация + удары + мувмент) готова к работе! Выберите ротацию Neuro в ауре.",
                             Formatting.GREEN);
                 });
             } catch (Exception exception) {
@@ -399,9 +440,6 @@ public final class NeuroManager {
             hasLastSeenRotation = true;
         }
 
-        // Точка прицеливания "дышит": человек не держит перекрестие прибитым к
-        // хитбоксу — она дрейфует вокруг корпуса и периодически съезжает с него.
-        // При скором ударе дрейф стягивается к центру: человек точнее в момент замаха.
         updateWander();
         Rotation aim = getAimRotation(target);
         float aimYaw = aim.yaw() + wanderYaw;
@@ -413,9 +451,6 @@ public final class NeuroManager {
         float desiredPitch;
 
         if (model != null) {
-            // 100% нейросеть: модель, обученная на записи ВАШЕЙ наводки, полностью
-            // ведёт камеру. Детерминированный контур здесь не участвует — любая
-            // формульная составляющая это отпечаток для ML-античита.
             float velYaw = 0.0F;
             float velPitch = 0.0F;
             if (hasLastSeenRotation) {
@@ -447,6 +482,14 @@ public final class NeuroManager {
             float hitProbability = NeuralRotationModel.sigmoid(output[4]);
             lastHitProbability = hitProbability;
 
+            // Вероятность удара и предсказание мувмента
+            lastAttackProbability = NeuralRotationModel.sigmoid(output[5]);
+            float predForward = output[6];
+            float predStrafe = output[7];
+            boolean predJump = NeuralRotationModel.sigmoid(output[8]) > 0.5F;
+            boolean predSprint = NeuralRotationModel.sigmoid(output[9]) > 0.5F;
+            predictedMovement = new MovementDecision(predForward, predStrafe, predJump, predSprint);
+
             float angularError = (float) Math.hypot(yawError, pitchError);
 
             // Close to target: scale down random noise to eliminate high-frequency jitter
@@ -458,17 +501,15 @@ public final class NeuroManager {
             float commandYaw = output[0] + (float) RANDOM.nextGaussian() * sigmaYaw * temperature;
             float commandPitch = output[1] + (float) RANDOM.nextGaussian() * sigmaPitch * temperature;
 
-            // Biomechanical motor damping: prevents velocity overshoot and oscillation (jitter)
+            // Biomechanical motor damping: prevents velocity overshoot and oscillation
             float motorDamping = 0.65F;
             float integratedVelYaw = velYaw * (1.0F - motorDamping) + commandYaw * motorDamping;
             float integratedVelPitch = velPitch * (1.0F - motorDamping) + commandPitch * motorDamping;
             integratedVelYaw = MathHelper.clamp(integratedVelYaw, -1.0F, 1.0F);
             integratedVelPitch = MathHelper.clamp(integratedVelPitch, -1.0F, 1.0F);
 
-            // Proximity scaling: decelerate near target (Fitts's law) to settle cleanly on hitbox
+            // Proximity scaling: decelerate near target (Fitts's law)
             float proximityFactor = MathHelper.clamp(angularError / 16.0F, 0.18F, 1.0F);
-
-            // Smooth continuous tracking gain without hard 2.5° cliff
             float trackingGain = MathHelper.clamp(angularError / 28.0F, 0.12F, 0.40F);
 
             float rawDesiredYaw = (integratedVelYaw * MAX_ROTATION_DELTA * proximityFactor) + (yawError * trackingGain);
@@ -477,15 +518,11 @@ public final class NeuroManager {
             rawDesiredYaw = MathHelper.clamp(rawDesiredYaw, -MAX_ROTATION_DELTA, MAX_ROTATION_DELTA);
             rawDesiredPitch = MathHelper.clamp(rawDesiredPitch, -MAX_ROTATION_DELTA, MAX_ROTATION_DELTA);
 
-            // Inertia smoothing: eliminates 20Hz jitter while keeping flicks responsive
             desiredYaw = previousPredictedYawDelta * 0.25F + rawDesiredYaw * 0.75F;
             desiredPitch = previousPredictedPitchDelta * 0.25F + rawDesiredPitch * 0.75F;
             previousPredictedYawDelta = desiredYaw;
             previousPredictedPitchDelta = desiredPitch;
 
-            // Watchdog: модель надолго потеряла цель (>60° больше секунды) — сброс
-            // окна, как будто человек заново перехватил прицел. Спасает от вечного
-            // промаха на сыром датасете.
             if (angularError > 60.0F) {
                 if (++modelLostTicks > 20) {
                     resetInference();
@@ -495,14 +532,9 @@ public final class NeuroManager {
                 modelLostTicks = 0;
             }
         } else {
-            // Нет модели — детерминированный контур-заглушка (для ML-античита это
-            // отпечаток, годится только проверить механику). Для игры — запишите
-            // датасет: .neuro record <имя> рядом с живым игроком.
             humanVelYaw = humanVelYaw * (1.0F - humanDamping) + yawError * humanStiffness;
             humanVelPitch = humanVelPitch * (1.0F - humanDamping) + pitchError * humanStiffness;
 
-            // Физиологический тремор ~9 Гц + моторный шум: после квантования выглядит
-            // как одиночные шаги ±1 по сетке — так дрожит реальная рука.
             tremorPhase += 2.6F + RANDOM.nextFloat() * 0.5F;
             float tremorYaw = (float) Math.sin(tremorPhase) * 0.10F
                     + (float) RANDOM.nextGaussian() * 0.05F;
@@ -511,12 +543,11 @@ public final class NeuroManager {
 
             desiredYaw = MathHelper.clamp(humanVelYaw, -MAX_ROTATION_DELTA, MAX_ROTATION_DELTA) + tremorYaw;
             desiredPitch = MathHelper.clamp(humanVelPitch, -MAX_ROTATION_DELTA, MAX_ROTATION_DELTA) + tremorPitch;
+            lastHitProbability = doesRotationHit(target, current.yaw(), current.pitch()) ? 1.0F : 0.0F;
+            lastAttackProbability = lastHitProbability;
+            predictedMovement = new MovementDecision(0.0F, 0.0F, false, false);
         }
 
-        // Квантование на сетку чувствительности мыши с переносом остатка: каждая
-        // дельта — целое число шагов сенсы (gcdError ≈ 0 у SlothAC/Grim), остаток
-        // не теряется, поэтому мелкие движения не залипают. Реальная мышь выдаёт
-        // дельты на этой же сетке, поэтому реализм не страдает.
         float grid = mouseGridStep();
         float deltaYaw = quantizeToGrid(desiredYaw, grid, true);
         float deltaPitch = quantizeToGrid(desiredPitch, grid, false);
@@ -564,12 +595,11 @@ public final class NeuroManager {
     private static void updateWander() {
         if (--wanderRetargetTicks <= 0) {
             wanderRetargetTicks = 10 + RANDOM.nextInt(15);
-            float radius = 0.4F + RANDOM.nextFloat() * 1.0F; // 0.4-1.4° от точки наводки
+            float radius = 0.4F + RANDOM.nextFloat() * 1.0F;
             float angle = RANDOM.nextFloat() * 6.2832F;
             wanderTargetYaw = (float) Math.cos(angle) * radius;
             wanderTargetPitch = (float) Math.sin(angle) * radius * 0.5F;
         }
-        // Перед ударом дрейф стягивается к корпусу (lock 0.05), между ударами держится компактно
         float lock = attackImminent ? 0.05F : 0.5F;
         wanderYaw += (wanderTargetYaw * lock - wanderYaw) * 0.30F;
         wanderPitch += (wanderTargetPitch * lock - wanderPitch) * 0.30F;
@@ -599,6 +629,20 @@ public final class NeuroManager {
 
     public static float getLastHitProbability() {
         return lastHitProbability;
+    }
+
+    public static float getLastAttackProbability() {
+        return lastAttackProbability;
+    }
+
+    public static MovementDecision getPredictedMovement() {
+        return predictedMovement;
+    }
+
+    public static boolean shouldAttack() {
+        if (!hasActiveModel()) return true;
+        boolean cooldownReady = MC.player == null || MC.player.getAttackCooldownProgress(0.5F) >= 0.85F;
+        return lastAttackProbability >= 0.5F && cooldownReady;
     }
 
     public static List<String> getNames() {
@@ -698,7 +742,12 @@ public final class NeuroManager {
                 accelPitch,
                 cooldown,
                 MathHelper.clamp((float) (box.maxX - box.minX) * 0.5F, 0.0F, 1.0F),
-                MathHelper.clamp((float) (box.maxY - box.minY) * 0.5F, 0.0F, 1.0F)
+                MathHelper.clamp((float) (box.maxY - box.minY) * 0.5F, 0.0F, 1.0F),
+                observer.isOnGround() ? 1.0F : 0.0F,
+                target.isOnGround() ? 1.0F : 0.0F,
+                MathHelper.clamp((float) observerVelocity.y, -1.0F, 1.0F),
+                MathHelper.clamp((float) targetVelocity.y, -1.0F, 1.0F),
+                MathHelper.clamp((float) safeDy / 4.0F, -1.0F, 1.0F)
         };
     }
 
@@ -760,7 +809,7 @@ public final class NeuroManager {
     private static void writeDataset(Path path, List<NeuralRotationModel.TrainingSample> samples)
             throws IOException {
         try (BufferedWriter writer = Files.newBufferedWriter(path)) {
-            writer.write(DATASET_HEADER_V2 + "; history=" + HISTORY + "; features=" + FEATURES
+            writer.write(DATASET_HEADER_V3 + "; history=" + HISTORY + "; features=" + FEATURES
                     + "; labels=" + NeuralRotationModel.LABELS);
             writer.newLine();
             for (NeuralRotationModel.TrainingSample sample : samples) {
@@ -782,37 +831,71 @@ public final class NeuroManager {
     private static List<NeuralRotationModel.TrainingSample> readDataset(Path path) throws IOException {
         List<NeuralRotationModel.TrainingSample> samples = new ArrayList<>();
         boolean headerSeen = false;
+        int fileHistory = HISTORY;
+        int fileFeatures = FEATURES;
+        int fileLabels = NeuralRotationModel.LABELS;
+
         try (BufferedReader reader = Files.newBufferedReader(path)) {
             String line;
             while ((line = reader.readLine()) != null) {
                 if (line.isBlank()) continue;
                 if (line.startsWith("#")) {
-                    if (line.startsWith(DATASET_HEADER_V2)) {
+                    if (line.startsWith(DATASET_HEADER_V3)) {
                         headerSeen = true;
+                        fileHistory = parseHeaderInt(line, "history", HISTORY);
+                        fileFeatures = parseHeaderInt(line, "features", FEATURES);
+                        fileLabels = parseHeaderInt(line, "labels", NeuralRotationModel.LABELS);
+                    } else if (line.startsWith(DATASET_HEADER_V2)) {
+                        headerSeen = true;
+                        fileHistory = parseHeaderInt(line, "history", 8);
+                        fileFeatures = parseHeaderInt(line, "features", 17);
+                        fileLabels = parseHeaderInt(line, "labels", 3);
                     } else if (line.startsWith(DATASET_HEADER_V1)) {
-                        throw new IOException("датасет старого формата v1 — перезапишите запись");
+                        headerSeen = true;
+                        fileHistory = parseHeaderInt(line, "history", 8);
+                        fileFeatures = parseHeaderInt(line, "features", 17);
+                        fileLabels = parseHeaderInt(line, "labels", 3);
                     }
                     continue;
                 }
+
                 String[] values = line.split(",");
-                if (values.length != NeuralRotationModel.INPUTS + NeuralRotationModel.LABELS) {
+                int expectedTokens = fileHistory * fileFeatures + fileLabels;
+                if (values.length < expectedTokens) {
                     throw new IOException("повреждённая строка датасета");
                 }
+
                 float[] input = new float[NeuralRotationModel.INPUTS];
                 float[] output = new float[NeuralRotationModel.LABELS];
+
                 try {
-                    for (int i = 0; i < input.length; i++) {
-                        input[i] = Float.parseFloat(values[i]);
+                    // Чтение кадров истории с автоматическим паддингом старых версий
+                    int tokenIndex = 0;
+                    for (int frame = 0; frame < Math.min(fileHistory, HISTORY); frame++) {
+                        int base = frame * FEATURES;
+                        for (int f = 0; f < fileFeatures; f++) {
+                            float val = Float.parseFloat(values[tokenIndex++]);
+                            if (f < FEATURES) {
+                                input[base + f] = val;
+                            }
+                        }
                     }
-                    for (int i = 0; i < output.length; i++) {
-                        output[i] = Float.parseFloat(values[input.length + i]);
+
+                    // Чтение лейблов (акселерация, хит, атака, мувмент)
+                    for (int l = 0; l < fileLabels; l++) {
+                        float val = Float.parseFloat(values[tokenIndex++]);
+                        if (l < NeuralRotationModel.LABELS) {
+                            output[l] = val;
+                        }
                     }
                 } catch (NumberFormatException exception) {
                     throw new IOException("некорректное число в датасете", exception);
                 }
+
                 samples.add(new NeuralRotationModel.TrainingSample(input, output));
             }
         }
+
         if (!headerSeen) {
             throw new IOException("неизвестный формат датасета");
         }
@@ -820,6 +903,19 @@ public final class NeuroManager {
             throw new IOException("для обучения нужно минимум 32 семпла");
         }
         return samples;
+    }
+
+    private static int parseHeaderInt(String header, String key, int defaultValue) {
+        for (String part : header.split(";")) {
+            String[] kv = part.trim().split("=");
+            if (kv.length == 2 && kv[0].trim().equalsIgnoreCase(key)) {
+                try {
+                    return Integer.parseInt(kv[1].trim());
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        return defaultValue;
     }
 
     private static void cancelRecording(String message) {
@@ -841,6 +937,7 @@ public final class NeuroManager {
         lastCameraPitch = 0.0F;
         previousRecordedVelYaw = 0.0F;
         previousRecordedVelPitch = 0.0F;
+        attackTriggeredThisTick = false;
     }
 
     private static void removeDummy() {
@@ -861,35 +958,17 @@ public final class NeuroManager {
         lastSeenPitch = 0.0F;
         hasLastSeenRotation = false;
         lastHitProbability = 0.0F;
+        lastAttackProbability = 0.0F;
+        predictedMovement = new MovementDecision(0.0F, 0.0F, false, false);
         modelLostTicks = 0;
-        wanderYaw = 0.0F;
-        wanderPitch = 0.0F;
-        wanderTargetYaw = 0.0F;
-        wanderTargetPitch = 0.0F;
-        wanderRetargetTicks = 0;
-        // На каждый захват цели — новые коэффициенты контура: статистика дельт
-        // не схлопывается в одну точку, профиль не повторяется от фрага к фрагу.
-        humanVelYaw = 0.0F;
-        humanVelPitch = 0.0F;
-        humanStiffness = 0.30F + RANDOM.nextFloat() * 0.12F;
-        humanDamping = 0.48F + RANDOM.nextFloat() * 0.14F;
-        quantRemainderYaw = 0.0F;
-        quantRemainderPitch = 0.0F;
-        tremorPhase = RANDOM.nextFloat() * 6.2832F;
     }
 
-    private static boolean isRecording() {
+    public static boolean isRecording() {
         return recordingName != null;
     }
 
-    private static Path datasetPath(String name) {
-        ensureInitialized();
-        return directory.resolve(name + DATASET_EXTENSION);
-    }
-
-    private static Path modelPath(String name) {
-        ensureInitialized();
-        return directory.resolve(name + MODEL_EXTENSION);
+    public static boolean isTraining() {
+        return training.get();
     }
 
     private static void ensureInitialized() {
@@ -903,7 +982,19 @@ public final class NeuroManager {
         Files.createDirectories(directory);
     }
 
-    private static String removeExtension(String value, String extension) {
-        return value.endsWith(extension) ? value.substring(0, value.length() - extension.length()) : null;
+    private static Path datasetPath(String name) {
+        ensureInitialized();
+        return directory.resolve(name + DATASET_EXTENSION);
+    }
+
+    private static Path modelPath(String name) {
+        ensureInitialized();
+        return directory.resolve(name + MODEL_EXTENSION);
+    }
+
+    private static String removeExtension(String fileName, String extension) {
+        return fileName.endsWith(extension)
+                ? fileName.substring(0, fileName.length() - extension.length())
+                : null;
     }
 }

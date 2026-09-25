@@ -17,6 +17,10 @@ public class Msdf {
     public static MsdfFont WILD;
     public static MsdfFont SUISSE;
     public static MsdfFont WILDICONS;
+    public static MsdfFont SF_MEDIUM;
+    public static MsdfFont SF_SEMIBOLD;
+    public static MsdfFont SF_LIGHT;
+    public static MsdfFont SF_ROUND;
 
     private static boolean useFallback = false;
 

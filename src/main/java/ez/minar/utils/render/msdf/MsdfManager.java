@@ -20,6 +20,10 @@ public class MsdfManager {
     public static MsdfFont WILD;
     public static MsdfFont SUISSE;
     public static MsdfFont WILDICONS;
+    public static MsdfFont SF_MEDIUM;
+    public static MsdfFont SF_SEMIBOLD;
+    public static MsdfFont SF_LIGHT;
+    public static MsdfFont SF_ROUND;
 
     public static void init() {
         if (initialized)
@@ -34,6 +38,10 @@ public class MsdfManager {
         Msdf.WILD = WILD = register("wild", "wild.png", "wild.json");
         Msdf.SUISSE = SUISSE = register("suisse", "suisseintlmedium.png", "suisseintlmedium.json");
         Msdf.WILDICONS = WILDICONS = register("wildicons", "wildicons.png", "wildicons.json");
+        Msdf.SF_MEDIUM = SF_MEDIUM = register("sf_medium", "sf_medium.png", "sf_medium.json");
+        Msdf.SF_SEMIBOLD = SF_SEMIBOLD = register("sf_semibold", "sf_semibold.png", "sf_semibold.json");
+        Msdf.SF_LIGHT = SF_LIGHT = register("sf_light", "sf_light.png", "sf_light.json");
+        Msdf.SF_ROUND = SF_ROUND = register("sf_round", "sf_round.png", "sf_round.json");
         setDefault("montserrat");
 
         initialized = true;

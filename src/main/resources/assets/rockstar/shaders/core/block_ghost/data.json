@@ -1,0 +1,9 @@
+{
+    "vertex": "rockstar:core/block_ghost/vertex",
+    "fragment": "rockstar:core/block_ghost/fragment",
+    "samplers": [
+        { "name": "Sampler0" },
+        { "name": "Sampler2" }
+    ],
+    "uniforms": []
+}

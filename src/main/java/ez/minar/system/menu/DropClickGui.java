@@ -23,6 +23,7 @@ import java.awt.Color;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -53,6 +54,8 @@ public class DropClickGui extends Screen {
     private float groupX, groupY, baseScale = 1;
     private float layoutWidth, layoutHeight;
     private final Map<MultiSetting, Boolean> multiOpen = new IdentityHashMap<>();
+    private final Map<MultiSetting, Float> multiReveal = new IdentityHashMap<>();
+    private final Map<ChipKey, float[]> chipAnim = new HashMap<>();
     private final Map<BooleanSetting, Float> switches = new IdentityHashMap<>();
     private final Map<ColorSetting, float[]> colorStates = new IdentityHashMap<>();
     private final Map<ColorSetting, Integer> colorRgb = new IdentityHashMap<>();
@@ -99,6 +102,7 @@ public class DropClickGui extends Screen {
         for (Panel panel : panels) {
             panel.modules = new ArrayList<>(FunctionManager.getFunctionsByCategory(panel.category));
             panel.modules.sort(Comparator.comparing(Function::getName, String.CASE_INSENSITIVE_ORDER));
+            panel.modules.removeIf(f -> f instanceof ez.minar.system.features.render.HUD);
             panel.open = true;
         }
         super.onDisplayed();
@@ -221,16 +225,19 @@ public class DropClickGui extends Screen {
                         && row.intersect(clip).contains(mouseX, mouseY);
                 float hover = approach(hovers.getOrDefault(f, 0f), hovered ? 1 : 0, 18);
                 hovers.put(f, hover);
-                if (reveal > .01f) rect(px + 4, my, 92, ROW_H + reveal, 3, new Color(100, 96, 124, 30));
-                rect(px + 4, my, 92, ROW_H, 3, new Color(255, 255, 255, Math.round(10 * hover)));
-                String label = bindingFunction == f ? "[" + keyName(f.getKeybind()) + "] " + ez.minar.system.managers.LocalizationManager.get("Bind...") : f.getDisplayName();
-                text(context, label, px + 8, my + 5, 6.2f, f.isEnabled() ? Color.WHITE : DISABLED, 73, false);
+                // Row background: enabled modules glow with accent color
                 float enabled = approach(toggles.getOrDefault(f, f.isEnabled() ? 1f : 0f), f.isEnabled() ? 1 : 0, 20);
                 toggles.put(f, enabled);
-                if (f.isEnabled() || expanded == f || hover > .2f || enabled > .01f) {
-                    rect(px + 81, my + 5, 12, 7, 3.5f, mix(new Color(55, 54, 64), accent, enabled));
-                    rect(px + 82 + 5 * enabled, my + 6, 5, 5, 2.5f, Color.WHITE);
-                } else text(context, "...", px + 85, my + 4, 6, new Color(80, 78, 88), 8, false);
+                Color rowBg = new Color(255, 255, 255, Math.round(10 * hover));
+                if (f.isEnabled() || enabled > 0.01f) {
+                    int accentAlpha = Math.round(28 * enabled);
+                    rowBg = new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), Math.max(accentAlpha, Math.round(10 * hover)));
+                }
+                if (reveal > .01f) rect(px + 4, my, 92, ROW_H + reveal, 3, new Color(100, 96, 124, 30));
+                rect(px + 4, my, 92, ROW_H, 3, rowBg);
+                String label = bindingFunction == f ? "[" + keyName(f.getKeybind()) + "] " + ez.minar.system.managers.LocalizationManager.get("Bind...") : f.getDisplayName();
+                Color nameColor = f.isEnabled() ? accent : DISABLED;
+                text(context, label, px + 8, my + 5, 6.2f, nameColor, 88, false);
                 if (hovered) description = f.getDisplayDesc();
                 if (p.open) addHit(row, button -> {
                     if (button == 0) f.toggle();
@@ -273,9 +280,7 @@ public class DropClickGui extends Screen {
             return options.isEmpty() ? 18 : options.getLast().y + 14;
         }
         if (s instanceof MultiSetting multi) {
-            if (!multiOpen.getOrDefault(multi, false)) return 18;
-            List<Chip> chips = chips(multi);
-            return chips.isEmpty() ? 18 : chips.getLast().y + 15;
+            return 18 + (chipsHeight(multi) - 18) * multiReveal.getOrDefault(multi, 0f);
         }
         if (s instanceof ColorSetting) return 78;
         if (s instanceof TextSetting || s instanceof ButtonSetting) return 33;
@@ -311,27 +316,36 @@ public class DropClickGui extends Screen {
         } else if (setting instanceof ModeSetting s) {
             text(c, s.getDisplayName(), x + 5, y + 5, 6, TEXT, 90, false);
             for (Chip chip : optionChips(s.getModes())) {
-                boolean selected = s.isEnabled(chip.label);
-                rect(x + chip.x, y + chip.y, chip.w, 10, 3,
-                        selected ? tint(accent, .4f) : new Color(65, 62, 74, 35));
-                String displayChip = ez.minar.system.managers.LocalizationManager.get(chip.label);
-                text(c, displayChip, x + chip.x + 4, y + chip.y + 2, 6,
-                        selected ? Color.WHITE : new Color(126, 122, 139), chip.w - 8, false);
+                drawChip(c, s, chip, x, y, 0, 1, s.isEnabled(chip.label));
                 addHit(new Rect(x + chip.x, y + chip.y, chip.w, 10),
                         b -> { if (b == 0) s.setMode(chip.label); }, null);
             }
         } else if (setting instanceof MultiSetting s) {
             boolean open = multiOpen.getOrDefault(s, false);
+            float reveal = approach(multiReveal.getOrDefault(s, 0f), open ? 1 : 0, 18);
+            multiReveal.put(s, reveal);
+
             text(c, s.getDisplayName(), x + 5, y + 5, 6, TEXT, 66, false);
-            rect(x + 74, y + 3, 21, 10, 2, tint(accent, .35f));
-            text(c, open ? "CLOSE" : "OPEN", x + 76, y + 5, 5, TEXT, 18, false);
+            float toggleHover = chipHover(s, "toggle", x + 74, y + 3, 21, 10);
+            rect(x + 74, y + 3, 21, 10, 3, tint(accent, .35f + .18f * toggleHover));
+            String toggleLabel = open ? "CLOSE" : "OPEN";
+            float toggleW = Msdf.width(Msdf.SF_REGULAR, toggleLabel, 5);
+            text(c, toggleLabel, x + 74 + (21 - toggleW) / 2f,
+                    y + 3 + (10 - Msdf.height(Msdf.SF_REGULAR, 5)) / 2f, 5, TEXT, 21, false);
             addHit(new Rect(x + 74, y + 3, 21, 10), b -> { if (b == 0 || b == 1) multiOpen.put(s, !open); }, null);
-            if (open) for (Chip chip : chips(s)) {
-                rect(x + chip.x, y + chip.y, chip.w, 10, 2, tint(accent, s.isEnabled(chip.label) ? .56f : .12f));
-                String displayChip = ez.minar.system.managers.LocalizationManager.get(chip.label);
-                text(c, displayChip, x + chip.x + 4, y + chip.y + 1.5f, 6,
-                        s.isEnabled(chip.label) ? Color.WHITE : DISABLED, chip.w - 8, false);
-                addHit(new Rect(x + chip.x, y + chip.y, chip.w, 10), b -> { if (b == 0) s.toggle(chip.label); }, null);
+
+            if (reveal > .01f) {
+                List<Chip> chips = chips(s);
+                Rect clip = pushClip(new Rect(x, y + 16, 95, (chipsHeight(s) - 16) * reveal));
+                try {
+                    for (Chip chip : chips) {
+                        drawChip(c, s, chip, x, y, (1 - reveal) * 4, reveal, s.isEnabled(chip.label));
+                        addHit(new Rect(x + chip.x, y + chip.y, chip.w, 10),
+                                b -> { if (b == 0) s.toggle(chip.label); }, null);
+                    }
+                } finally {
+                    popClip(clip);
+                }
             }
         } else if (setting instanceof ColorSetting s) {
             drawColor(c, s, x, y);
@@ -421,6 +435,42 @@ public class DropClickGui extends Screen {
 
     private List<Chip> chips(MultiSetting s) {
         return optionChips(s.getOptionsList());
+    }
+
+    private float chipsHeight(MultiSetting s) {
+        List<Chip> list = chips(s);
+        return list.isEmpty() ? 18 : list.getLast().y + 14;
+    }
+
+    private float chipHover(Setting setting, String option, float x, float y, float w, float h) {
+        float[] anim = chipAnim.computeIfAbsent(new ChipKey(setting, option), k -> new float[2]);
+        boolean hovered = mouseX >= x && mouseX <= x + w && mouseY >= y && mouseY <= y + h;
+        anim[0] = approach(anim[0], hovered ? 1 : 0, 24);
+        return anim[0];
+    }
+
+    /** Shared look for Mode/Multi options: label centered in the pill, eased hover and selection. */
+    private void drawChip(DrawContext c, Setting setting, Chip chip, float x, float y, float slide, float reveal, boolean selected) {
+        String display = ez.minar.system.managers.LocalizationManager.get(chip.label);
+        float cx = x + chip.x, cy = y + chip.y + slide;
+        float hover = chipHover(setting, chip.label, cx, cy, chip.w, 10);
+
+        float[] anim = chipAnim.get(new ChipKey(setting, chip.label));
+        anim[1] = approach(anim[1], selected ? 1 : 0, 16);
+        float on = anim[1];
+
+        Color bg = mix(new Color(66, 64, 78), accent, .78f * on);
+        rect(cx, cy, chip.w, 10, 3, new Color(
+                Math.min(255, bg.getRed() + Math.round(26 * hover)),
+                Math.min(255, bg.getGreen() + Math.round(26 * hover)),
+                Math.min(255, bg.getBlue() + Math.round(26 * hover)),
+                Math.round(Math.clamp((58 + 165 * on + 34 * hover) * reveal, 0f, 255f))));
+
+        MsdfFont font = Msdf.SF_REGULAR;
+        float textW = Msdf.width(font, display, 6);
+        Color label = mix(new Color(126, 122, 139), Color.WHITE, Math.max(on, .55f * hover));
+        text(c, display, cx + (chip.w - textW) / 2f, cy + (10 - Msdf.height(font, 6)) / 2f, 6,
+                new Color(label.getRed(), label.getGreen(), label.getBlue(), Math.round(255 * reveal)), chip.w, false);
     }
 
     private List<Chip> optionChips(List<String> options) {
@@ -739,6 +789,8 @@ public class DropClickGui extends Screen {
     @FunctionalInterface private interface Drag { void accept(float x, float y); }
     private record Hit(Rect bounds, Panel panel, Function function, Setting setting, IntConsumer action, Drag drag) { }
     private record Chip(String label, float x, float y, float w) { }
+
+    private record ChipKey(Setting setting, String option) { }
     private record Rect(float x, float y, float w, float h) {
         float right() { return x + w; }
         float bottom() { return y + h; }

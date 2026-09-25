@@ -213,6 +213,7 @@ public class Predictions extends Function {
     public void onRender2D(ez.minar.system.events.impl.Render2DEvent event) {
         if (mc.world == null || mc.player == null) return;
         net.minecraft.client.gui.DrawContext context = event.getContext();
+        if (context == null) return;
 
         for (LabelData label : labelsToRender) {
             float[] screen = ez.minar.utils.render.WorldToScreen.project(label.pos);

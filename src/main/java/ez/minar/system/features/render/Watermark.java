@@ -57,7 +57,8 @@ public class Watermark extends Function {
     private final NumberSetting positionX = new NumberSetting("Позиция X", 200, 0, 16384, 1);
     private final NumberSetting positionY = new NumberSetting("Позиция Y", 200, 0, 16384, 1);
 
-    final HudDrag drag = new HudDrag(positionX, positionY);
+    final HudDrag drag = new HudDrag("Ватермарка", positionX, positionY,
+            new NumberSetting("Ватермарка Масштаб", 1, HudDrag.MIN_SCALE, HudDrag.MAX_SCALE, 0.05));
     private boolean shown = true;
     private final TypingText animatedCaption = new TypingText(3000);
     private final TypingText animatedMessage = new TypingText(2000);

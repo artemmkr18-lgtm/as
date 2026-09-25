@@ -10,6 +10,18 @@ base {
     archivesName = project.archives_base_name
 }
 
+loom {
+    runs {
+        client {
+            vmArg "-Xmx2G"
+            vmArg "-XX:+UseG1GC"
+            if (project.hasProperty('autoJoin')) {
+                programArgs '--quickPlaySingleplayer', project.property('autoJoin').toString()
+            }
+        }
+    }
+}
+
 
 configurations {
     proguard
@@ -106,26 +118,5 @@ tasks.register('obfuscatedJar', JavaExec) {
                 '-outjars', outputJar.get().asFile.absolutePath,
                 "@${file('proguard-rules.pro').absolutePath}"
         ]
-    }
-}
-
-tasks.named('build') {
-    dependsOn tasks.named('obfuscatedJar')
-}
-
-publishing {
-    publications {
-        create("mavenJava", MavenPublication) {
-            artifactId = project.archives_base_name
-            from components.java
-        }
-    }
-
-    // See https://docs.gradle.org/current/userguide/publishing_maven.html for information on how to set up publishing.
-    repositories {
-        // Add repositories to publish to here.
-        // Notice: This block does NOT have the same function as the block in the top level.
-        // The repositories here will be used for publishing your artifact, not for
-        // retrieving dependencies.
     }
 }

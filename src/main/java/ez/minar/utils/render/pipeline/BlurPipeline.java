@@ -31,9 +31,10 @@ import java.util.OptionalInt;
 
 public class BlurPipeline {
 
-    private static final int BLUR_ITERATIONS = 5;
-    private static final int DOWNSAMPLE_SCALE = 2;
+    private static final int DOWNSAMPLE_SCALE = 3;
+    private static final float OFFSET_RAMP = 0.75f;
     private static final int BUFFER_SIZE = 256;
+    private static final int BLUR_PASSES = 4;
 
     private static final RenderPipeline PIPELINE_BLUR = RenderPipelines.register(
             RenderPipeline.builder(RenderPipelines.TRANSFORMS_AND_PROJECTION_SNIPPET)
@@ -79,9 +80,13 @@ public class BlurPipeline {
     private static int lastHeight = 0;
     private static boolean initialized = false;
 
-    private static long lastFrameTime = -1;
+    private static boolean frameDirty = true;
     private static int cachedBlurSrc = 0;
-    private static float cachedStrength = 0;
+
+    /** Call once per rendered frame before any glass card, or the blurred backdrop goes stale. */
+    public static void beginFrame() {
+        frameDirty = true;
+    }
 
     public static void init() {
         if (initialized)
@@ -145,11 +150,14 @@ public class BlurPipeline {
 
         lastWidth = fbWidth;
         lastHeight = fbHeight;
-        lastFrameTime = -1;
+        frameDirty = true;
     }
 
     public static void draw(Matrix4f matrix, float x, float y, float width, float height, float radius,
                             float strength, float z) {
+        if (width <= 0 || height <= 0 || strength <= 0.01f)
+            return;
+
         MinecraftClient client = MinecraftClient.getInstance();
         if (client.getFramebuffer() == null)
             return;
@@ -160,12 +168,16 @@ public class BlurPipeline {
 
         int fbWidth = client.getFramebuffer().textureWidth;
         int fbHeight = client.getFramebuffer().textureHeight;
+        if (fbWidth <= 0 || fbHeight <= 0)
+            return;
+
         int blurWidth = fbWidth / DOWNSAMPLE_SCALE;
         int blurHeight = fbHeight / DOWNSAMPLE_SCALE;
         ensureTextures(fbWidth, fbHeight);
 
-        long currentTime = System.nanoTime() / 16_666_666;
-        boolean needsBlur = currentTime != lastFrameTime || Math.abs(strength - cachedStrength) > 0.01f;
+        // A single blur pass per frame: all frosted cards in the HUD share this high quality
+        // backdrop instead of re-blurring the full screen for every pill and row.
+        boolean needsBlur = frameDirty;
 
         GpuSampler sampler = RenderSystem.getSamplerCache().get(FilterMode.LINEAR);
         GpuBufferSlice dynamicTransforms = RenderSystem.getDynamicUniforms()
@@ -180,7 +192,7 @@ public class BlurPipeline {
                     0, 0, 0, 0, 0,
                     fbWidth, fbHeight);
 
-            prepareBlurData(fbWidth, fbHeight, blurWidth, blurHeight, 1.0f, strength);
+            prepareBlurData(fbWidth, fbHeight, blurWidth, blurHeight, 1.0f, 4.0f);
             encoder.writeToBuffer(uniformBuffer.slice(), dataBuffer);
 
             try (RenderPass downsample = encoder.createRenderPass(
@@ -199,13 +211,12 @@ public class BlurPipeline {
                 downsample.draw(0, 6);
             }
 
-            int iterations = Math.max(2, (int) (BLUR_ITERATIONS * strength));
-            float[] offsets = { 1.0f, 2.0f, 2.0f, 3.0f };
-
-            for (int i = 0; i < iterations; i++) {
+            // 4 ping-pong passes with progressive offset ramp achieve a smooth, wide gaussian blur
+            // on the downsampled buffer with practically zero GPU overhead.
+            for (int i = 0; i < BLUR_PASSES; i++) {
                 int src = i % 2;
                 int dst = (i + 1) % 2;
-                float offset = i < offsets.length ? offsets[i] : 3.0f;
+                float offset = 1.0f + i * OFFSET_RAMP;
                 final int passIdx = i;
 
                 prepareBlurData(blurWidth, blurHeight, blurWidth, blurHeight, offset, 1.0f);
@@ -228,9 +239,8 @@ public class BlurPipeline {
                 }
             }
 
-            cachedBlurSrc = iterations % 2;
-            lastFrameTime = currentTime;
-            cachedStrength = strength;
+            cachedBlurSrc = BLUR_PASSES % 2;
+            frameDirty = false;
         }
 
         float[] radii = new float[] { radius, radius, radius, radius };
@@ -336,6 +346,6 @@ public class BlurPipeline {
         lastWidth = 0;
         lastHeight = 0;
         initialized = false;
-        lastFrameTime = -1;
+        frameDirty = true;
     }
 }

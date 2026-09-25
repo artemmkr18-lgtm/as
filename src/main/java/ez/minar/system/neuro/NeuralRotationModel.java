@@ -11,33 +11,35 @@ import java.util.List;
 import java.util.Random;
 
 /**
- * Dependency-free temporal MLP trained only on recorded camera samples.
- * Input: window of HISTORY feature frames. Output: Gaussian motor command
- * (yaw/pitch acceleration) + hit logit. NeuroManager integrates the sampled
- * acceleration into angular velocity, so the model never emits a raw angle.
+ * Dependency-free temporal MLP trained on complete combat demonstration sessions.
+ * Input: window of HISTORY feature frames (relative geometry, velocities, cooldown, movement state).
+ * Output: Gaussian motor command (yaw/pitch acceleration), hit logit, attack decision logit,
+ * and movement actions (forward, strafe, jump, sprint).
  */
 public final class NeuralRotationModel {
-    public static final int FEATURES = 17;
+    public static final int FEATURES = 22;
     public static final int HISTORY = 8;
     public static final int INPUTS = FEATURES * HISTORY;
-    public static final int LABELS = 3;
-    public static final int HIDDEN1 = 96;
-    public static final int HIDDEN2 = 48;
-    public static final int OUTPUTS = 5;
+    public static final int LABELS = 8;
+    public static final int HIDDEN1 = 128;
+    public static final int HIDDEN2 = 64;
+    public static final int OUTPUTS = 10;
     public static final float MAX_ACCEL = 2.0F;
     public static final float LOG_SIGMA_MIN = -4.5F;
     public static final float LOG_SIGMA_MAX = -0.5F;
+
     public static final int FEATURE_VEL_YAW = 10;
     public static final int FEATURE_VEL_PITCH = 11;
     public static final int FEATURE_ACCEL_YAW = 12;
     public static final int FEATURE_ACCEL_PITCH = 13;
 
     private static final int FILE_MAGIC = 0x4E455552;
-    private static final int FILE_VERSION = 13;
+    private static final int FILE_VERSION = 14;
     private static final float SIGMA_LOSS_WEIGHT = 0.25F;
     private static final int BATCH_SIZE = 32;
     private static final float GRADIENT_CLIP = 5.0F;
     private static final float HIT_LOSS_WEIGHT = 0.5F;
+    private static final float ATTACK_LOSS_WEIGHT = 0.8F;
 
     private final float[][] w1 = new float[HIDDEN1][INPUTS];
     private final float[] b1 = new float[HIDDEN1];
@@ -63,8 +65,8 @@ public final class NeuralRotationModel {
             data.add(new TrainingSample(sample.input().clone(), sample.output().clone()));
         }
 
-        // Yaw is symmetric: mirror every sample across the camera forward axis.
-        // A left flick teaches the right flick. Doubles flick data.
+        // Yaw and lateral strafe are symmetric: mirror every sample across the camera forward axis.
+        // A left flick and strafe teaches the right flick and strafe.
         int originalSize = data.size();
         for (int i = 0; i < originalSize; i++) {
             TrainingSample source = data.get(i);
@@ -72,14 +74,15 @@ public final class NeuralRotationModel {
             float[] output = source.output().clone();
             for (int frame = 0; frame < HISTORY; frame++) {
                 int base = frame * FEATURES;
-                input[base] = -input[base];
-                input[base + 2] = -input[base + 2];
-                input[base + 7] = -input[base + 7];
-                input[base + 9] = -input[base + 9];
+                input[base] = -input[base]; // safeYawDelta
+                input[base + 2] = -input[base + 2]; // centerYawDelta
+                input[base + 6] = -input[base + 6]; // targetVelocityLateral (rel X)
+                input[base + 8] = -input[base + 8]; // observerVelocityLateral (rel X)
                 input[base + FEATURE_VEL_YAW] = -input[base + FEATURE_VEL_YAW];
                 input[base + FEATURE_ACCEL_YAW] = -input[base + FEATURE_ACCEL_YAW];
             }
-            output[0] = -output[0];
+            output[0] = -output[0]; // accelYaw inverted
+            output[5] = -output[5]; // strafe inverted
             data.add(new TrainingSample(input, output));
         }
 
@@ -93,10 +96,6 @@ public final class NeuralRotationModel {
                 data.add(new TrainingSample(source.input().clone(), source.output().clone()));
             }
         }
-
-        // Speed-аугментация удалена: политика обязана двигаться с ЧЕЛОВЕЧЕСКОЙ скоростью
-        // записи. Разогнанные лейблы (x1.5-2.5) давали нечеловеческие перелёты — прямой
-        // отпечаток для ML-античитов, меряющих accel/jerk.
 
         NeuralRotationModel model = new NeuralRotationModel();
         Random random = new Random(seed);
@@ -131,6 +130,11 @@ public final class NeuralRotationModel {
                     float labelYaw = sample.output()[0];
                     float labelPitch = sample.output()[1];
                     float labelHit = sample.output()[2];
+                    float labelAttack = sample.output().length > 3 ? sample.output()[3] : 0.0F;
+                    float labelForward = sample.output().length > 4 ? sample.output()[4] : 0.0F;
+                    float labelStrafe = sample.output().length > 5 ? sample.output()[5] : 0.0F;
+                    float labelJump = sample.output().length > 6 ? sample.output()[6] : 0.0F;
+                    float labelSprint = sample.output().length > 7 ? sample.output()[7] : 0.0F;
 
                     float sigmaYaw = (float) Math.exp(clampLogSigma(output[2]));
                     float sigmaPitch = (float) Math.exp(clampLogSigma(output[3]));
@@ -138,8 +142,6 @@ public final class NeuralRotationModel {
                     float errYaw = output[0] - labelYaw;
                     float errPitch = output[1] - labelPitch;
 
-                    // Weight motor gradients by angular error of the last frame (flicks matter),
-                    // plus emphasis on close-but-missed states for final convergence.
                     int base = INPUTS - FEATURES;
                     float sampleYawError = Math.abs(sample.input()[base]) * 180.0F;
                     float samplePitchError = Math.abs(sample.input()[base + 1]) * 90.0F;
@@ -150,13 +152,12 @@ public final class NeuralRotationModel {
                     }
 
                     float[] dOut = new float[OUTPUTS];
-                    // mu is trained with plain MSE: gradients shrink to zero at convergence, so
-                    // weights stop moving. NLL on mu (err/sigma^2) produced constant-magnitude
-                    // gradients after clipping; Adam then took equal-size steps forever and the
-                    // head saturated at the accel clamp -> permanent max rotation (the 360 spin).
+                    // 0: yaw command
                     dOut[0] = 2.0F * errYaw * errorWeight;
+                    // 1: pitch command
                     dOut[1] = 2.0F * errPitch * errorWeight;
-                    // sigma head only matches the residual magnitude; it does not steer mu.
+
+                    // 2-3: uncertainty sigma head
                     float gradSigmaYaw = (1.0F - (errYaw * errYaw) / (sigmaYaw * sigmaYaw)) * SIGMA_LOSS_WEIGHT;
                     float gradSigmaPitch = (1.0F - (errPitch * errPitch) / (sigmaPitch * sigmaPitch)) * SIGMA_LOSS_WEIGHT;
                     if ((output[2] <= LOG_SIGMA_MIN && gradSigmaYaw > 0.0F)
@@ -169,7 +170,20 @@ public final class NeuralRotationModel {
                     }
                     dOut[2] = gradSigmaYaw;
                     dOut[3] = gradSigmaPitch;
+
+                    // 4: hit logit
                     dOut[4] = HIT_LOSS_WEIGHT * (sigmoid(output[4]) - labelHit);
+                    // 5: attack decision logit
+                    dOut[5] = ATTACK_LOSS_WEIGHT * (sigmoid(output[5]) - labelAttack);
+                    // 6: movement forward
+                    dOut[6] = 1.0F * (output[6] - labelForward);
+                    // 7: movement strafe
+                    dOut[7] = 1.0F * (output[7] - labelStrafe);
+                    // 8: jump logit
+                    dOut[8] = 0.5F * (sigmoid(output[8]) - labelJump);
+                    // 9: sprint logit
+                    dOut[9] = 0.5F * (sigmoid(output[9]) - labelSprint);
+
                     for (int i = 0; i < OUTPUTS; i++) {
                         dOut[i] = clamp(dOut[i] / batchCount, -GRADIENT_CLIP, GRADIENT_CLIP);
                     }
@@ -224,7 +238,7 @@ public final class NeuralRotationModel {
 
     public float[] predict(float[] input) {
         if (input.length != INPUTS) {
-            throw new IllegalArgumentException("Expected " + INPUTS + " inputs.");
+            throw new IllegalArgumentException("Expected " + INPUTS + " inputs, got " + input.length);
         }
 
         float[] output = forward(input, new float[HIDDEN1], new float[HIDDEN2]);
@@ -232,6 +246,8 @@ public final class NeuralRotationModel {
         output[1] = clamp(output[1], -MAX_ACCEL, MAX_ACCEL);
         output[2] = clampLogSigma(output[2]);
         output[3] = clampLogSigma(output[3]);
+        output[6] = clamp(output[6], -1.0F, 1.0F); // forward
+        output[7] = clamp(output[7], -1.0F, 1.0F); // strafe
         return output;
     }
 
@@ -341,8 +357,6 @@ public final class NeuralRotationModel {
                 w3[i][j] = (float) (random.nextGaussian() * s3);
             }
         }
-        // logSigma starts inside [LOG_SIGMA_MIN, LOG_SIGMA_MAX] (sigma ~= 0.135), otherwise the
-        // clamped region zeroes the sigma gradient and the head can never learn.
         b3[2] = -2.0F;
         b3[3] = -2.0F;
     }
@@ -424,7 +438,7 @@ public final class NeuralRotationModel {
     public record TrainingSample(float[] input, float[] output) {
         public TrainingSample {
             if (input.length != INPUTS || output.length != LABELS) {
-                throw new IllegalArgumentException("Invalid training sample shape.");
+                throw new IllegalArgumentException("Invalid training sample shape: input=" + input.length + ", output=" + output.length);
             }
         }
     }

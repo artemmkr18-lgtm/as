@@ -44,18 +44,29 @@ public class ChamsPipeline {
                     .withCull(false)
                     .build());
 
+    // ESP Outline masks
     private static SimpleFramebuffer maskFramebuffer;
     private static SimpleFramebuffer friendMaskFramebuffer;
-    private static GpuBuffer[] uniformBuffers = new GpuBuffer[4];
-    private static int uniformBufferIndex = 0;
-    private static GpuBuffer dummyVertexBuffer;
     private static boolean renderingMask;
     private static boolean entityFrameStarted;
     private static boolean entityMaskPending;
     private static boolean friendEntityMaskPending;
 
+    // Dedicated Chams masks (separate so EntityESP and Chams never conflict)
+    private static SimpleFramebuffer chamsMaskFramebuffer;
+    private static SimpleFramebuffer chamsFriendMaskFramebuffer;
+    private static boolean chamsEntityFrameStarted;
+    private static boolean chamsEntityMaskPending;
+    private static boolean chamsFriendEntityMaskPending;
+
+    private static GpuBuffer[] uniformBuffers = new GpuBuffer[4];
+    private static int uniformBufferIndex = 0;
+    private static GpuBuffer dummyVertexBuffer;
+
     private ChamsPipeline() {
     }
+
+    // ==================== EntityESP / HandChams Mask Pipeline ====================
 
     public static Framebuffer getMaskFramebuffer() {
         return getMaskFramebuffer(false);
@@ -70,10 +81,10 @@ public class ChamsPipeline {
         int height = main.textureHeight;
         SimpleFramebuffer framebuffer = friendMask ? friendMaskFramebuffer : maskFramebuffer;
         if (maskFramebuffer == null) {
-            maskFramebuffer = new SimpleFramebuffer("minar_chams_mask", width, height, true);
+            maskFramebuffer = new SimpleFramebuffer("minar_esp_mask", width, height, true);
         }
         if (friendMaskFramebuffer == null) {
-            friendMaskFramebuffer = new SimpleFramebuffer("minar_chams_friend_mask", width, height, true);
+            friendMaskFramebuffer = new SimpleFramebuffer("minar_esp_friend_mask", width, height, true);
         }
 
         framebuffer = friendMask ? friendMaskFramebuffer : maskFramebuffer;
@@ -82,10 +93,6 @@ public class ChamsPipeline {
         }
 
         return framebuffer;
-    }
-
-    private static void clearMask() {
-        clearMask(false);
     }
 
     private static void clearMask(boolean friendMask) {
@@ -100,11 +107,11 @@ public class ChamsPipeline {
     }
 
     public static void renderMask(Runnable renderer, boolean respectDepth) {
-        clearMask();
+        clearMask(false);
         if (respectDepth) {
-            copyMainDepthToMask();
+            copyMainDepthToMask(false);
         }
-        renderIntoMask(renderer);
+        renderIntoMask(renderer, false, false);
         entityMaskPending = true;
     }
 
@@ -116,7 +123,7 @@ public class ChamsPipeline {
         renderEntityMask(renderer, respectDepth, true);
     }
 
-    private static void renderEntityMask(Runnable renderer, boolean respectDepth, boolean friendMask) {
+    public static void renderEntityMask(Runnable renderer, boolean respectDepth, boolean friendMask) {
         if (!entityFrameStarted) {
             clearMask(false);
             clearMask(true);
@@ -126,38 +133,12 @@ public class ChamsPipeline {
             }
             entityFrameStarted = true;
         }
-        renderIntoMask(renderer, friendMask);
+        renderIntoMask(renderer, friendMask, false);
         if (friendMask) {
             friendEntityMaskPending = true;
         } else {
             entityMaskPending = true;
         }
-    }
-
-    private static void renderIntoMask(Runnable renderer) {
-        renderIntoMask(renderer, false);
-    }
-
-    private static void renderIntoMask(Runnable renderer, boolean friendMask) {
-        Framebuffer framebuffer = getMaskFramebuffer(friendMask);
-        if (framebuffer == null || framebuffer.getColorAttachmentView() == null) return;
-
-        GpuTextureView previousColor = RenderSystem.outputColorTextureOverride;
-        GpuTextureView previousDepth = RenderSystem.outputDepthTextureOverride;
-        try {
-            renderingMask = true;
-            RenderSystem.outputColorTextureOverride = framebuffer.getColorAttachmentView();
-            RenderSystem.outputDepthTextureOverride = framebuffer.getDepthAttachmentView();
-            renderer.run();
-        } finally {
-            RenderSystem.outputColorTextureOverride = previousColor;
-            RenderSystem.outputDepthTextureOverride = previousDepth;
-            renderingMask = false;
-        }
-    }
-
-    public static boolean isRenderingMask() {
-        return renderingMask;
     }
 
     public static boolean hasEntityMask() {
@@ -178,10 +159,6 @@ public class ChamsPipeline {
         friendEntityMaskPending = false;
     }
 
-    private static void copyMainDepthToMask() {
-        copyMainDepthToMask(false);
-    }
-
     private static void copyMainDepthToMask(boolean friendMask) {
         MinecraftClient client = MinecraftClient.getInstance();
         Framebuffer main = client.getFramebuffer();
@@ -191,37 +168,143 @@ public class ChamsPipeline {
         }
     }
 
-    public static void draw(Color color, float fillAlpha, int shaderMode) {
-        draw(color, fillAlpha, shaderMode, 0, 0.0f, 0.0f, false, false);
+    // ==================== Dedicated Chams Mask Pipeline ====================
+
+    private static Framebuffer getChamsMaskFramebuffer(boolean friendMask) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        Framebuffer main = client.getFramebuffer();
+        if (main == null || main.getColorAttachmentView() == null) return null;
+
+        int width = main.textureWidth;
+        int height = main.textureHeight;
+        SimpleFramebuffer framebuffer = friendMask ? chamsFriendMaskFramebuffer : chamsMaskFramebuffer;
+        if (chamsMaskFramebuffer == null) {
+            chamsMaskFramebuffer = new SimpleFramebuffer("minar_chams_mask", width, height, true);
+        }
+        if (chamsFriendMaskFramebuffer == null) {
+            chamsFriendMaskFramebuffer = new SimpleFramebuffer("minar_chams_friend_mask", width, height, true);
+        }
+
+        framebuffer = friendMask ? chamsFriendMaskFramebuffer : chamsMaskFramebuffer;
+        if (framebuffer.textureWidth != width || framebuffer.textureHeight != height) {
+            framebuffer.resize(width, height);
+        }
+
+        return framebuffer;
     }
 
-    public static void draw(Color color, float fillAlpha, int shaderMode, boolean useOffsets) {
-        draw(color, fillAlpha, shaderMode, 0, 0.0f, 0.0f, false, useOffsets);
+    private static void clearChamsMask(boolean friendMask) {
+        Framebuffer framebuffer = getChamsMaskFramebuffer(friendMask);
+        if (framebuffer == null || framebuffer.getColorAttachment() == null) return;
+
+        CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+        encoder.clearColorTexture(framebuffer.getColorAttachment(), 0);
+        if (framebuffer.getDepthAttachment() != null) {
+            encoder.clearDepthTexture(framebuffer.getDepthAttachment(), 1.0);
+        }
+    }
+
+    private static void copyMainDepthToChamsMask(boolean friendMask) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        Framebuffer main = client.getFramebuffer();
+        Framebuffer mask = getChamsMaskFramebuffer(friendMask);
+        if (main != null && mask != null && main.getDepthAttachment() != null && mask.getDepthAttachment() != null) {
+            mask.copyDepthFrom(main);
+        }
+    }
+
+    public static void renderChamsMask(Runnable renderer, boolean respectDepth, boolean friendMask) {
+        if (!chamsEntityFrameStarted) {
+            clearChamsMask(false);
+            clearChamsMask(true);
+            if (respectDepth) {
+                copyMainDepthToChamsMask(false);
+                copyMainDepthToChamsMask(true);
+            }
+            chamsEntityFrameStarted = true;
+        }
+        renderIntoMask(renderer, friendMask, true);
+        if (friendMask) {
+            chamsFriendEntityMaskPending = true;
+        } else {
+            chamsEntityMaskPending = true;
+        }
+    }
+
+    public static boolean hasChamsMask() {
+        return chamsEntityMaskPending || chamsFriendEntityMaskPending;
+    }
+
+    public static boolean hasNormalChamsMask() {
+        return chamsEntityMaskPending;
+    }
+
+    public static boolean hasFriendChamsMask() {
+        return chamsFriendEntityMaskPending;
+    }
+
+    public static void finishChamsFrame() {
+        chamsEntityFrameStarted = false;
+        chamsEntityMaskPending = false;
+        chamsFriendEntityMaskPending = false;
+    }
+
+    // ==================== Shared Render Utility ====================
+
+    private static void renderIntoMask(Runnable renderer, boolean friendMask, boolean isChams) {
+        Framebuffer framebuffer = isChams ? getChamsMaskFramebuffer(friendMask) : getMaskFramebuffer(friendMask);
+        if (framebuffer == null || framebuffer.getColorAttachmentView() == null) return;
+
+        GpuTextureView previousColor = RenderSystem.outputColorTextureOverride;
+        GpuTextureView previousDepth = RenderSystem.outputDepthTextureOverride;
+        try {
+            renderingMask = true;
+            RenderSystem.outputColorTextureOverride = framebuffer.getColorAttachmentView();
+            RenderSystem.outputDepthTextureOverride = framebuffer.getDepthAttachmentView();
+            renderer.run();
+        } finally {
+            RenderSystem.outputColorTextureOverride = previousColor;
+            RenderSystem.outputDepthTextureOverride = previousDepth;
+            renderingMask = false;
+        }
+    }
+
+    public static boolean isRenderingMask() {
+        return renderingMask;
+    }
+
+    // ==================== Drawing Methods ====================
+
+    public static void draw(Color color, float fillAlpha, int shaderMode) {
+        draw(color, fillAlpha, shaderMode, 0, 0.0f, 0.0f, false, false, false);
     }
 
     public static void draw(Color color, float fillAlpha, int shaderMode,
                             int outlineType, float outlineWidth, float glowStrength) {
-        draw(color, fillAlpha, shaderMode, outlineType, outlineWidth, glowStrength, false, false);
-    }
-
-    public static void drawFriend(Color color, float fillAlpha, int shaderMode) {
-        draw(color, fillAlpha, shaderMode, 0, 0.0f, 0.0f, true, false);
-    }
-
-    public static void drawFriend(Color color, float fillAlpha, int shaderMode, boolean useOffsets) {
-        draw(color, fillAlpha, shaderMode, 0, 0.0f, 0.0f, true, useOffsets);
+        draw(color, fillAlpha, shaderMode, outlineType, outlineWidth, glowStrength, false, false, false);
     }
 
     public static void drawFriend(Color color, float fillAlpha, int shaderMode,
                                   int outlineType, float outlineWidth, float glowStrength) {
-        draw(color, fillAlpha, shaderMode, outlineType, outlineWidth, glowStrength, true, false);
+        draw(color, fillAlpha, shaderMode, outlineType, outlineWidth, glowStrength, true, false, false);
+    }
+
+    public static void drawChams(Color color, float fillAlpha, int shaderMode,
+                                 int outlineType, float outlineWidth, float glowStrength) {
+        draw(color, fillAlpha, shaderMode, outlineType, outlineWidth, glowStrength, false, false, true);
+    }
+
+    public static void drawChamsFriend(Color color, float fillAlpha, int shaderMode,
+                                       int outlineType, float outlineWidth, float glowStrength) {
+        draw(color, fillAlpha, shaderMode, outlineType, outlineWidth, glowStrength, true, false, true);
     }
 
     private static void draw(Color color, float fillAlpha, int shaderMode,
-                             int outlineType, float outlineWidth, float glowStrength, boolean friendMask, boolean useOffsets) {
+                             int outlineType, float outlineWidth, float glowStrength,
+                             boolean friendMask, boolean useOffsets, boolean isChams) {
         MinecraftClient client = MinecraftClient.getInstance();
         Framebuffer main = client.getFramebuffer();
-        Framebuffer mask = getMaskFramebuffer(friendMask);
+        Framebuffer mask = isChams ? getChamsMaskFramebuffer(friendMask) : getMaskFramebuffer(friendMask);
         if (main == null || mask == null || main.getColorAttachmentView() == null || mask.getColorAttachmentView() == null) {
             return;
         }
@@ -300,6 +383,14 @@ public class ChamsPipeline {
         if (friendMaskFramebuffer != null) {
             friendMaskFramebuffer.delete();
             friendMaskFramebuffer = null;
+        }
+        if (chamsMaskFramebuffer != null) {
+            chamsMaskFramebuffer.delete();
+            chamsMaskFramebuffer = null;
+        }
+        if (chamsFriendMaskFramebuffer != null) {
+            chamsFriendMaskFramebuffer.delete();
+            chamsFriendMaskFramebuffer = null;
         }
         for (int i = 0; i < uniformBuffers.length; i++) {
             if (uniformBuffers[i] != null) {

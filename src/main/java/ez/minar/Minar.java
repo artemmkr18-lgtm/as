@@ -20,6 +20,9 @@ import ez.minar.system.features.render.ChinaHat;
 import ez.minar.system.features.render.LineGlyphs;
 import ez.minar.system.features.render.Waypoints;
 import ez.minar.system.features.render.WetWorld;
+import ez.minar.system.features.render.Atmosphere;
+import ez.minar.system.features.render.MotionBlur;
+import ez.minar.system.features.render.Chams;
 
 import ez.minar.system.managers.AltManager;
 import ez.minar.system.managers.ConfigManager;
@@ -93,6 +96,9 @@ public class Minar implements ClientModInitializer {
         WorldRenderEvents.END_MAIN.register(LineGlyphs::renderWorld);
         WorldRenderEvents.END_MAIN.register(Waypoints::renderWorld);
         WorldRenderEvents.END_MAIN.register(WetWorld::renderWorld);
+        WorldRenderEvents.END_MAIN.register(Atmosphere::renderWorld);
+        WorldRenderEvents.END_MAIN.register(MotionBlur::renderWorld);
+        WorldRenderEvents.END_MAIN.register(Chams::renderWorld);
         WorldRenderEvents.END_MAIN.register(ez.minar.system.features.movement.Blink::renderWorld);
         WorldRenderEvents.END_MAIN.register(ez.minar.system.features.combat.AutoClicker::renderWorld);
         WorldRenderEvents.END_MAIN.register(ez.minar.system.features.combat.AutoCrystal::renderWorld);

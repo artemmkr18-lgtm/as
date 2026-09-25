@@ -1,0 +1,9 @@
+{
+    "vertex": "rockstar:core/item_smooth/translucent/vertex",
+    "fragment": "rockstar:core/item_smooth/translucent/fragment",
+    "samplers": [
+        { "name": "Sampler0" },
+        { "name": "Sampler2" }
+    ],
+    "uniforms": []
+}

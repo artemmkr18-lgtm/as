@@ -451,7 +451,9 @@ public class ClickGui extends Screen {
         RenderUtil.text(context, Msdf.SF_BOLD, ucX + f(35), ucY + f(20),
                 trimToWidth(userName, f(80), f(14), Msdf.SF_BOLD), f(14), withOpacity(TEXT_25, opacity));
 
-        long enabledCount = FunctionManager.getFunctions().stream().filter(Function::isEnabled).count();
+        long enabledCount = FunctionManager.getFunctions().stream()
+                .filter(fn -> !(fn instanceof ez.minar.system.features.render.HUD) && !"HUD".equalsIgnoreCase(fn.getName()))
+                .filter(Function::isEnabled).count();
         RenderUtil.texture(ucX + f(117), ucY + f(21), f(14), ICON_CROWN, 0, withOpacity(TEXT_25, opacity));
         RenderUtil.text(context, Msdf.SF_BOLD, ucX + f(140), ucY + f(20), String.valueOf(enabledCount), f(14),
                 withOpacity(TEXT_25, opacity));
@@ -480,6 +482,7 @@ public class ClickGui extends Screen {
         String q = searchQuery.toLowerCase(Locale.ROOT);
         List<Function> list = new ArrayList<>();
         for (Function fn : FunctionManager.getFunctionsByCategory(CATEGORIES[category])) {
+            if (fn instanceof ez.minar.system.features.render.HUD || "HUD".equalsIgnoreCase(fn.getName())) continue;
             if (!q.isEmpty()
                     && !fn.getName().toLowerCase(Locale.ROOT).contains(q)
                     && !fn.getDisplayName().toLowerCase(Locale.ROOT).contains(q)) continue;

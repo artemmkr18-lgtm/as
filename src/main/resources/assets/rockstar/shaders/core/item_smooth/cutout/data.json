@@ -1,0 +1,10 @@
+{
+    "vertex": "rockstar:core/item_smooth/cutout/vertex",
+    "fragment": "rockstar:core/item_smooth/cutout/fragment",
+    "samplers": [
+        { "name": "Sampler0" },
+        { "name": "Sampler1" },
+        { "name": "Sampler2" }
+    ],
+    "uniforms": []
+}

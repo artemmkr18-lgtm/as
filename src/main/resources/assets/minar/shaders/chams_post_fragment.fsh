@@ -52,80 +52,16 @@ float fbm(vec2 p) {
     return v;
 }
 
-float ridged(vec2 p) {
-    float v = 0.0;
-    float a = 0.55;
-    for (int i = 0; i < 4; i++) {
-        float r = 1.0 - abs(noise(p) * 2.0 - 1.0);
-        v += r * a;
-        p = p * 2.18 + vec2(3.1, 9.2);
-        a *= 0.52;
-    }
-    return v;
-}
-
 float edgeGlow(vec2 uv) {
-    vec2 edge = min(uv, 1.0 - uv);
-    float nearest = min(edge.x, edge.y);
-    return 1.0 - smoothstep(0.0, 0.18, nearest);
-}
-
-float bwColormapRed(float x) {
-    if (x < 0.0) return 54.0 / 255.0;
-    if (x < 20049.0 / 82979.0) return (829.79 * x + 54.51) / 255.0;
-    return 1.0;
-}
-
-float bwColormapGreen(float x) {
-    if (x < 20049.0 / 82979.0) return 0.0;
-    if (x < 327013.0 / 810990.0) return (8546482679670.0 / 10875673217.0 * x - 2064961390770.0 / 10875673217.0) / 255.0;
-    if (x <= 1.0) return (103806720.0 / 483977.0 * x + 19607415.0 / 483977.0) / 255.0;
-    return 1.0;
-}
-
-float bwColormapBlue(float x) {
-    if (x < 0.0) return 54.0 / 255.0;
-    if (x < 7249.0 / 82979.0) return (829.79 * x + 54.51) / 255.0;
-    if (x < 20049.0 / 82979.0) return 127.0 / 255.0;
-    if (x < 327013.0 / 810990.0) return (792.0224934136139 * x - 64.36479073560233) / 255.0;
-    return 1.0;
-}
-
-vec3 bwColormap(float x) {
-    return vec3(bwColormapRed(x), bwColormapGreen(x), bwColormapBlue(x));
-}
-
-float bwRand(vec2 n) {
-    return fract(sin(dot(n, vec2(12.9898, 4.1414))) * 43758.5453);
-}
-
-float bwNoise(vec2 p) {
-    vec2 ip = floor(p);
-    vec2 u = fract(p);
-    u = u * u * (3.0 - 2.0 * u);
-    float res = mix(
-        mix(bwRand(ip), bwRand(ip + vec2(1.0, 0.0)), u.x),
-        mix(bwRand(ip + vec2(0.0, 1.0)), bwRand(ip + vec2(1.0, 1.0)), u.x),
-        u.y
-    );
-    return res * res;
-}
-
-const mat2 BW_MTX = mat2(0.80, 0.60, -0.60, 0.80);
-
-float bwFbm(vec2 p, float t) {
-    float f = 0.0;
-    f += 0.500000 * bwNoise(p + vec2(t)); p = BW_MTX * p * 2.02;
-    f += 0.031250 * bwNoise(p); p = BW_MTX * p * 2.01;
-    f += 0.250000 * bwNoise(p); p = BW_MTX * p * 2.03;
-    f += 0.125000 * bwNoise(p); p = BW_MTX * p * 2.01;
-    f += 0.062500 * bwNoise(p); p = BW_MTX * p * 2.04;
-    f += 0.015625 * bwNoise(p + vec2(sin(t)));
-    return f / 0.96875;
-}
-
-float bwPattern(vec2 p, float t) {
-    return bwFbm(p + vec2(bwFbm(p + vec2(bwFbm(p, t)), t)), t);
+    vec2 texel = 1.0 / max(uScreen.xy, vec2(1.0));
+    float center = texture(Sampler0, uv).a;
+    float edge = 0.0;
+    for (int i = 0; i < 8; i++) {
+        float ang = 6.2831853 * (float(i) / 8.0);
+        vec2 off = vec2(cos(ang), sin(ang)) * texel * 3.0;
+        edge += abs(center - texture(Sampler0, uv + off).a);
+    }
+    return clamp(edge / 4.0, 0.0, 1.0);
 }
 
 float sampleMask(vec2 uv) {
@@ -221,140 +157,134 @@ void main() {
         return;
     }
 
-    // Обычная заливка (без шейдера)
+    // Standard fill (without shader effect)
     if (useShader < 0.5) {
         vec4 fill = vec4(uColor.rgb, mask * fillAlpha);
         fragColor = over(fill, vec4(outColor, outAlpha));
         return;
     }
 
-    // Шейдерные режимы
-    vec2 uv = vUV;
-    vec2 patternUv = uv;
-
-    float useOffsets = uParams.y;
-    if (useOffsets > 0.5) {
-        vec3 partData = texture(Sampler0, uv).rgb;
-        if (partData.b > 0.5) {
-            patternUv = partData.rg * 2.0; // Local UV from mask (0.0 to 1.0) scaled up slightly
-        }
-    }
+    // Aspect-ratio-corrected, high-frequency UV
+    vec2 aspect = vec2(uScreen.x / max(uScreen.y, 1.0), 1.0);
+    vec2 patternUv = vUV * aspect * 6.5;
 
     vec3 color = uColor.rgb;
     float alpha = fillAlpha;
     float time = uParams.w * 0.85;
-    float glow = edgeGlow(uv);
-    patternUv += vec2(time * 0.035, -time * 0.025);
+    float rimGlow = edgeGlow(vUV);
 
     if (shaderMode == 0) {
-        // Full - туман с пульсацией
-        float pulse = 0.72 + 0.28 * sin(time * 1.5 + (patternUv.x + patternUv.y) * 8.0);
-        float mist = fbm(patternUv * 3.0 + vec2(time * 0.12, -time * 0.08));
-        color = mix(color * 0.55, mix(color, vec3(1.0), 0.35), mist * pulse + glow * 0.45);
-        alpha *= 0.55 + mist * 0.3 + glow * 0.25;
+        // Mode 0: Solid (flat saturated clean silhouette)
+        color = uColor.rgb;
+        alpha = fillAlpha;
+    } else if (shaderMode == 1) {
+        // Mode 1: Web (cyberpunk spiderweb grid)
+        vec2 w = patternUv * 3.5;
+        vec2 grid = abs(fract(w + vec2(time * 0.35, -time * 0.2)) - 0.5);
+        float d = min(grid.x, grid.y);
+        float web1 = 1.0 - smoothstep(0.0, 0.12, d);
+        float d2 = abs(fract((w.x + w.y) * 0.707 + time * 0.25) - 0.5);
+        float web2 = 1.0 - smoothstep(0.0, 0.09, d2);
+        float totalWeb = max(web1, web2);
+        color = mix(uColor.rgb * 0.20, mix(uColor.rgb, vec3(1.0), 0.85), totalWeb);
+        alpha = fillAlpha * (0.35 + totalWeb * 0.65);
     } else if (shaderMode == 2) {
-        // WebShader - паутина
-        vec2 flow = patternUv * 2.5;
-        vec2 drift = vec2(time * 0.20, -time * 0.15);
-        vec2 warp = vec2(fbm(flow * 0.90 + drift * 0.75 + vec2(0.0, 4.1)), fbm(flow * 0.78 - drift * 0.48 + vec2(3.7, 1.8)));
-        vec2 q = flow + (warp - 0.5) * 1.8;
-        float mist = fbm(q * 0.72 - drift * 0.24 + vec2(4.2, 8.1));
-        float veins = pow(clamp(ridged(q * 1.85 + vec2(mist * 2.5, mist * 1.6) - drift * 0.55), 0.0, 1.0), 2.4);
-        float strands = pow(clamp(1.0 - abs(sin((q.x * 1.08 + q.y * 0.42) * 1.7 + time * 0.85 + mist * 4.3)), 0.0, 1.0), 4.8);
-        float energy = clamp(mist * 0.22 + veins * 0.88 + strands * 0.55, 0.0, 1.0);
-        color = mix(color * 0.5, mix(color, vec3(1.0), 0.45), energy);
-        alpha *= 0.35 + energy * 0.65;
+        // Mode 2: Plasma (swirling electric multi-colored vortex)
+        vec2 p = patternUv * 2.5;
+        float p1 = sin(p.x * 1.8 + time * 2.8);
+        float p2 = sin(p.y * 2.2 - time * 2.2);
+        float p3 = sin((p.x + p.y) * 1.5 + time * 2.0);
+        float p4 = sin(length(p) * 2.4 - time * 3.2);
+        float plasma = (p1 + p2 + p3 + p4) * 0.25 * 0.5 + 0.5;
+        vec3 c1 = vec3(1.0, 0.05, 0.65);
+        vec3 c2 = vec3(0.0, 0.95, 1.0);
+        vec3 c3 = vec3(0.55, 0.0, 1.0);
+        vec3 plasmaCol = mix(c1, c2, plasma);
+        plasmaCol = mix(plasmaCol, c3, sin(plasma * 6.28 + time * 1.5) * 0.5 + 0.5);
+        color = mix(uColor.rgb, plasmaCol, 0.85);
+        alpha = fillAlpha * (0.60 + 0.40 * plasma);
+    } else if (shaderMode == 3) {
+        // Mode 3: Waves (horizontal pulsating energy waves)
+        float wave = sin(patternUv.y * 7.0 - time * 5.0) * 0.5 + 0.5;
+        wave = pow(wave, 4.0);
+        float subWave = pow(sin(patternUv.y * 14.0 - time * 10.0) * 0.5 + 0.5, 6.0) * 0.5;
+        float totalWave = clamp(wave + subWave, 0.0, 1.0);
+        vec3 crestColor = mix(uColor.rgb, vec3(1.0), 0.85);
+        color = mix(uColor.rgb * 0.25, crestColor, totalWave);
+        alpha = fillAlpha * (0.35 + 0.65 * totalWave);
     } else if (shaderMode == 4) {
-        // Plasma - плазма
-        float p1 = sin(patternUv.x * 8.0 + time * 2.0);
-        float p2 = sin(patternUv.y * 6.0 + time * 1.5);
-        float p3 = sin((patternUv.x + patternUv.y) * 5.0 + time * 1.8);
-        float n = (p1 + p2 + p3) * 0.16 + 0.5;
-        color = mix(color, mix(color, vec3(1.0), 0.7), n);
-        alpha *= 0.45 + n * 0.55;
+        // Mode 4: Water (shimmering ocean caustics & aquatic ripple)
+        vec2 wUv = patternUv * 3.5;
+        float c1 = sin(wUv.x * 1.6 + time * 2.2 + cos(wUv.y * 1.4 + time * 1.6));
+        float c2 = cos(wUv.y * 1.6 - time * 2.0 + sin(wUv.x * 1.4 - time * 1.4));
+        float caustic = pow(clamp((c1 * c2 + 1.0) * 0.5, 0.0, 1.0), 2.2);
+        vec3 oceanBlue = vec3(0.04, 0.22, 0.75);
+        vec3 tropicalCyan = vec3(0.10, 0.88, 0.98);
+        vec3 sunShimmer = vec3(0.95, 1.0, 1.0);
+        vec3 water = mix(oceanBlue, tropicalCyan, caustic * 0.7);
+        water = mix(water, sunShimmer, pow(caustic, 3.0) * 0.85);
+        color = mix(uColor.rgb * 0.25, water, 0.88);
+        alpha = fillAlpha * (0.45 + 0.55 * caustic);
+    } else if (shaderMode == 5) {
+        // Mode 5: Energy (crackling lightning arcs & electric sparks)
+        vec2 eUv = patternUv * 3.0;
+        float n = fbm(eUv * 1.5 + vec2(time * 1.8, -time * 2.5));
+        float bolt1 = pow(clamp(1.0 - abs(sin(eUv.x * 3.2 + n * 5.0 + time * 8.0)), 0.0, 1.0), 12.0);
+        float bolt2 = pow(clamp(1.0 - abs(sin((eUv.x + eUv.y) * 2.8 - n * 4.5 - time * 9.0)), 0.0, 1.0), 10.0);
+        float spark = clamp(bolt1 + bolt2, 0.0, 1.0);
+        vec3 elecDeep = vec3(0.12, 0.35, 1.0);
+        vec3 elecGlow = vec3(0.90, 0.95, 1.0);
+        color = mix(uColor.rgb * 0.25, mix(elecDeep, elecGlow, spark), clamp(n * 0.35 + spark * 0.85, 0.0, 1.0));
+        alpha = fillAlpha * (0.35 + 0.65 * spark);
     } else if (shaderMode == 6) {
-        // ChamsFill - энергетический поток
-        float speedX = 0.22;
-        float speedY = 0.15;
-        float shaderScale = 1.35;
-        float density = 1.15;
-        float glowStrength = 1.0;
-
-        float densityMix = clamp((density - 0.5) / 2.5, 0.0, 1.0);
-        vec2 flow = patternUv * shaderScale;
-        vec2 drift = vec2(time * speedX, time * speedY);
-
-        vec2 warp = vec2(
-            fbm(flow * 0.85 + drift * 0.55 + vec2(0.0, 4.1)),
-            fbm(flow * 0.80 - drift * 0.42 + vec2(3.7, 1.8))
-        );
-        vec2 q = flow + (warp - 0.5) * mix(1.3, 2.5, densityMix);
-
-        float mist = fbm(q * 0.70 - drift * 0.18 + vec2(4.2, 8.1));
-
-        float diagonal1 = q.x * 1.02 + q.y * 0.38 + time * (speedX * 0.80 + speedY * 0.25);
-        float diagonal2 = q.x * -0.58 + q.y * 1.10 - time * (speedY * 0.90);
-
-        float band1 = 1.0 - abs(sin(diagonal1 * 1.85 + mist * 4.8));
-        float band2 = 1.0 - abs(sin(diagonal2 * 1.45 - mist * 3.2));
-        band1 = pow(clamp(band1, 0.0, 1.0), mix(3.3, 7.0, densityMix));
-        band2 = pow(clamp(band2, 0.0, 1.0), mix(3.8, 7.8, densityMix));
-
-        float veins = ridged(q * 1.90 + vec2(mist * 2.7, mist * 1.9) - drift * 0.55);
-        veins = pow(clamp(veins, 0.0, 1.0), mix(2.0, 3.8, densityMix));
-
-        float micro = ridged(q * 3.6 - vec2(7.1, 2.6) + drift * 0.35);
-        micro = pow(clamp(micro, 0.0, 1.0), 5.8);
-
-        float energy = clamp(
-            mist * 0.24 +
-            band1 * 0.70 +
-            band2 * 0.40 +
-            veins * 0.84 +
-            micro * 0.28,
-            0.0, 1.0
-        );
-
-        float core = smoothstep(0.16, 0.98, energy);
-        float brightVeins = pow(clamp(max(veins, band1), 0.0, 1.0), 1.35);
-        float glowVal = (brightVeins * 0.95 + micro * 0.55) * glowStrength;
-
-        color = color * (0.24 + mist * 0.20 + core * 0.88 + glowVal * 0.52);
-        alpha *= clamp(0.24 + core * 0.74 + glowVal * 0.20, 0.0, 1.0);
+        // Mode 6: Rainbow (flowing chromatic RGB spectrum)
+        float hue = fract(patternUv.y * 0.85 - time * 0.35 + patternUv.x * 0.4);
+        vec3 rgb = clamp(abs(mod(hue * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0);
+        color = rgb;
+        alpha = fillAlpha;
+    } else if (shaderMode == 7) {
+        // Mode 7: Fire (rising flame tongues & embers)
+        vec2 fUv = patternUv * vec2(2.5, 4.0);
+        float fNoise = fbm(fUv + vec2(0.0, -time * 4.5));
+        float flame = clamp(fNoise * 1.4 - (fUv.y * 0.25 - 0.2), 0.0, 1.0);
+        float flicker = 0.88 + 0.12 * sin(time * 24.0);
+        flame = clamp(flame * flicker, 0.0, 1.0);
+        vec3 fYellow = vec3(1.0, 0.92, 0.2);
+        vec3 fOrange = vec3(1.0, 0.45, 0.04);
+        vec3 fRed = vec3(0.85, 0.08, 0.02);
+        vec3 fDark = vec3(0.15, 0.03, 0.02);
+        vec3 fCol;
+        if (flame > 0.65) fCol = mix(fOrange, fYellow, (flame - 0.65) / 0.35);
+        else if (flame > 0.30) fCol = mix(fRed, fOrange, (flame - 0.30) / 0.35);
+        else fCol = mix(fDark, fRed, flame / 0.30);
+        color = fCol;
+        alpha = fillAlpha * clamp(flame * 1.35, 0.25, 1.0);
     } else if (shaderMode == 8) {
-        float shade = bwPattern(patternUv * 2.15, time * 0.18);
-        color = bwColormap(shade);
-        alpha *= clamp(0.35 + shade * 0.85, 0.0, 1.0);
+        // Mode 8: Smoke (dark ghostly swirling mist)
+        vec2 sUv = patternUv * 2.2;
+        float s1 = fbm(sUv * 1.2 + vec2(time * 0.3, -time * 0.5));
+        float s2 = fbm(sUv * 1.6 - vec2(time * 0.35, time * 0.25));
+        float smoke = clamp(s1 * 0.6 + s2 * 0.4, 0.0, 1.0);
+        vec3 sDark = vec3(0.06, 0.06, 0.10);
+        vec3 sLight = vec3(0.40, 0.36, 0.52);
+        color = mix(sDark, sLight, smoke);
+        alpha = fillAlpha * (0.28 + 0.62 * smoke);
+    } else if (shaderMode == 9) {
+        // Mode 9: Metal (chrome reflection & specular shine)
+        vec2 mUv = patternUv * 3.0;
+        float chrome = sin(mUv.y * 3.0 + mUv.x * 2.0 + time * 0.8) * 0.5 + 0.5;
+        chrome = pow(chrome, 4.0);
+        vec3 metalBase = uColor.rgb * 0.45;
+        vec3 chromeShine = vec3(1.0);
+        color = mix(metalBase, chromeShine, clamp(chrome * 0.85 + rimGlow * 0.55, 0.0, 1.0));
+        alpha = fillAlpha * (0.70 + 0.30 * chrome);
     } else if (shaderMode == 10) {
-        vec2 waveUv = (2.0 * patternUv - 1.0) * vec2(uScreen.x / max(uScreen.y, 1.0), 1.0);
-        for (float i = 1.0; i < 10.0; i++) {
-            waveUv.x += 0.6 / i * cos(i * 2.5 * waveUv.y + time);
-            waveUv.y += 0.6 / i * cos(i * 1.5 * waveUv.x + time);
-        }
-        float wave = 0.1 / max(abs(sin(time - waveUv.y - waveUv.x)), 0.08);
-        color = mix(color * 0.18, color, clamp(wave, 0.0, 1.7));
-        alpha *= clamp(0.38 + wave * 0.45, 0.0, 1.0);
-    } else if (shaderMode == 12) {
-        // Water turbulence (Hoskins / joltz0r)
-        const float TAU = 6.28318530718;
-        float wTime = time * 0.5 + 23.0;
-        vec2 p = mod(patternUv * TAU, TAU) - 250.0;
-        vec2 ii = vec2(p);
-        float cval = 1.0;
-        float inten = 0.005;
-        for (int n = 0; n < 5; n++) {
-            float t = wTime * (1.0 - (3.5 / float(n + 1)));
-            ii = p + vec2(cos(t - ii.x) + sin(t + ii.y), sin(t - ii.y) + cos(t + ii.x));
-            cval += 1.0 / length(vec2(p.x / (sin(ii.x + t) / inten), p.y / (cos(ii.y + t) / inten)));
-        }
-        cval /= 5.0;
-        cval = 1.17 - pow(cval, 1.4);
-        vec3 waterCol = vec3(pow(abs(cval), 8.0));
-        waterCol = clamp(waterCol + vec3(0.0, 0.35, 0.5), 0.0, 1.0);
-        color = mix(color * 0.18, color * waterCol, clamp(waterCol.b * 1.2, 0.0, 1.0));
-        alpha *= clamp(0.40 + waterCol.b * 0.70, 0.0, 1.0);
+        // Mode 10: Blur (neon aura & frosted glass)
+        float pulse = 0.85 + 0.15 * sin(time * 3.5);
+        vec3 neonColor = mix(uColor.rgb, vec3(1.0), 0.5);
+        color = mix(uColor.rgb * 0.35, neonColor, rimGlow * pulse);
+        alpha = fillAlpha * (0.35 + 0.65 * rimGlow * pulse);
     }
-
 
     if (alpha <= 0.001) {
         discard;

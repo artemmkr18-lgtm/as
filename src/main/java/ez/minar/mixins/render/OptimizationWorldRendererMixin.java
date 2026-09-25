@@ -39,15 +39,22 @@ public class OptimizationWorldRendererMixin {
 
     @Inject(method = "fillBlockEntityRenderStates", at = @At("TAIL"))
     private void minar$cullFarBlockEntities(Camera camera, float tickDelta, WorldRenderState worldRenderState, CallbackInfo ci) {
+        if (camera == null || worldRenderState == null || worldRenderState.blockEntityRenderStates == null) return;
         double maxDistanceSq = Optimization.getBlockEntityMaxDistanceSqStatic();
         if (maxDistanceSq == Double.MAX_VALUE) return;
 
         Vec3d cameraPos = camera.getCameraPos();
-        worldRenderState.blockEntityRenderStates.removeIf(state -> {
-            double dx = state.pos.getX() + 0.5 - cameraPos.x;
-            double dy = state.pos.getY() + 0.5 - cameraPos.y;
-            double dz = state.pos.getZ() + 0.5 - cameraPos.z;
-            return dx * dx + dy * dy + dz * dz > maxDistanceSq;
-        });
+        if (cameraPos == null) return;
+
+        try {
+            worldRenderState.blockEntityRenderStates.removeIf(state -> {
+                if (state == null || state.pos == null) return false;
+                double dx = state.pos.getX() + 0.5 - cameraPos.x;
+                double dy = state.pos.getY() + 0.5 - cameraPos.y;
+                double dz = state.pos.getZ() + 0.5 - cameraPos.z;
+                return dx * dx + dy * dy + dz * dz > maxDistanceSq;
+            });
+        } catch (Throwable ignored) {
+        }
     }
 }

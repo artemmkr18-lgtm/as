@@ -2,15 +2,21 @@ package ez.minar.mixins.render;
 
 import ez.minar.system.api.FunctionManager;
 import ez.minar.system.features.render.AntiInvisible;
+import ez.minar.system.features.render.Chams;
+import ez.minar.system.features.render.ChinaHat;
 import ez.minar.system.features.render.EntityESP;
+import ez.minar.utils.render.pipeline.ChamsPipeline;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.render.RenderLayer;
 import net.minecraft.client.render.VertexConsumer;
 import net.minecraft.client.render.VertexConsumerProvider;
 import net.minecraft.client.render.command.OrderedRenderCommandQueue;
 import net.minecraft.client.render.entity.LivingEntityRenderer;
+import net.minecraft.client.render.entity.model.BipedEntityModel;
 import net.minecraft.client.render.entity.model.EntityModel;
 import net.minecraft.client.render.entity.state.EntityRenderState;
 import net.minecraft.client.render.entity.state.LivingEntityRenderState;
+import net.minecraft.client.render.entity.state.PlayerEntityRenderState;
 import net.minecraft.client.render.state.CameraRenderState;
 import net.minecraft.client.util.BufferAllocator;
 import net.minecraft.client.util.math.MatrixStack;
@@ -24,6 +30,7 @@ import org.spongepowered.asm.mixin.injection.Constant;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.ModifyConstant;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(LivingEntityRenderer.class)
 public abstract class LivingEntityRendererMixin<S extends LivingEntityRenderState, M extends EntityModel<? super S>> {
@@ -59,12 +66,20 @@ public abstract class LivingEntityRendererMixin<S extends LivingEntityRenderStat
         minar$antiInvisibleAlpha = -1;
 
         AntiInvisible antiInvisible = FunctionManager.getFunction(AntiInvisible.class);
-        if (antiInvisible == null || !antiInvisible.isEnabled() || !state.invisible) {
+        Chams chams = FunctionManager.getFunction(Chams.class);
+        boolean chamsActive = chams != null && chams.isEnabled() && chams.shouldRender(state);
+
+        if (!state.invisible) {
             return;
         }
 
-        state.invisibleToPlayer = false;
-        minar$antiInvisibleAlpha = antiInvisible.getAlpha();
+        if ((antiInvisible != null && antiInvisible.isEnabled()) || chamsActive) {
+            state.invisibleToPlayer = false;
+        }
+
+        if (antiInvisible != null && antiInvisible.isEnabled()) {
+            minar$antiInvisibleAlpha = antiInvisible.getAlpha();
+        }
     }
 
     @ModifyConstant(method = "render", constant = @Constant(intValue = 0x26FFFFFF))
@@ -73,6 +88,22 @@ public abstract class LivingEntityRendererMixin<S extends LivingEntityRenderStat
             return originalColor;
         }
         return (minar$antiInvisibleAlpha << 24) | 0x00FFFFFF;
+    }
+
+    @Inject(method = "getRenderLayer", at = @At("HEAD"), cancellable = true)
+    private void minar$suppressVanillaLayer(S state, boolean showBody, boolean translucent, boolean showOutline, CallbackInfoReturnable<RenderLayer> cir) {
+        Chams chams = FunctionManager.getFunction(Chams.class);
+        if (chams != null && chams.isEnabled() && chams.shouldHideOriginal(state)) {
+            cir.setReturnValue(null);
+        }
+    }
+
+    @Inject(method = "shouldRenderFeatures", at = @At("HEAD"), cancellable = true)
+    private void minar$suppressFeatures(S state, CallbackInfoReturnable<Boolean> cir) {
+        Chams chams = FunctionManager.getFunction(Chams.class);
+        if (chams != null && chams.isEnabled() && chams.shouldSuppressFeatures(state)) {
+            cir.setReturnValue(false);
+        }
     }
 
     @Inject(method = "render", at = @At(value = "INVOKE",
@@ -101,12 +132,38 @@ public abstract class LivingEntityRendererMixin<S extends LivingEntityRenderStat
     }
 
     @Inject(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/util/math/MatrixStack;pop()V"))
+    private void minar$renderChams(S state, MatrixStack matrices, OrderedRenderCommandQueue queue,
+                                   CameraRenderState cameraRenderState, CallbackInfo ci) {
+        Chams chams = FunctionManager.getFunction(Chams.class);
+        if (chams == null || !chams.isEnabled() || !chams.shouldRender(state)) return;
+
+        model.setAngles(state);
+
+        if (chams.isPostShaderActive()) {
+            boolean throughWalls = chams.throughWalls.isEnabled();
+            boolean isFriend = chams.isFriend(state);
+            ChamsPipeline.renderChamsMask(() -> {
+                if (minar$outlineConsumers == null) {
+                    minar$outlineConsumers = VertexConsumerProvider.immediate(new BufferAllocator(786432));
+                }
+                matrices.push();
+                VertexConsumer buffer = minar$outlineConsumers.getBuffer(model.getLayer(getTexture(state)));
+                model.render(matrices, buffer, state.light, LivingEntityRenderer.getOverlay(state, 0.0f), 0xFFFFFFFF);
+                minar$outlineConsumers.draw();
+                matrices.pop();
+            }, !throughWalls, isFriend);
+        } else {
+            chams.render(state, matrices, model);
+        }
+    }
+
+    @Inject(method = "render", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/util/math/MatrixStack;pop()V"))
     private void minar$renderChinaHat(S state, MatrixStack matrices, OrderedRenderCommandQueue queue, CameraRenderState cameraRenderState, CallbackInfo ci) {
-        ez.minar.system.features.render.ChinaHat chinaHat = FunctionManager.getFunction(ez.minar.system.features.render.ChinaHat.class);
-        if (chinaHat != null && chinaHat.isEnabled() && state instanceof net.minecraft.client.render.entity.state.PlayerEntityRenderState playerState) {
-            net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
+        ChinaHat chinaHat = FunctionManager.getFunction(ChinaHat.class);
+        if (chinaHat != null && chinaHat.isEnabled() && state instanceof PlayerEntityRenderState playerState) {
+            MinecraftClient mc = MinecraftClient.getInstance();
             if (mc.player != null && playerState.id == mc.player.getId()) {
-                if (!mc.options.getPerspective().isFirstPerson() && model instanceof net.minecraft.client.render.entity.model.BipedEntityModel<?> bipedModel) {
+                if (!mc.options.getPerspective().isFirstPerson() && model instanceof BipedEntityModel<?> bipedModel) {
                      chinaHat.render(matrices, bipedModel);
                 }
             }
