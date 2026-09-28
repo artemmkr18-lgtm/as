@@ -7,6 +7,7 @@ import ez.minar.system.api.Function;
 import ez.minar.system.api.FunctionManager;
 import ez.minar.system.api.NewFunction;
 import ez.minar.system.events.EventHandler;
+import ez.minar.system.events.impl.PacketReceiveEvent;
 import ez.minar.system.events.impl.Render2DEvent;
 import ez.minar.system.features.combat.AttackAura;
 import ez.minar.system.features.combat.TriggerBot;
@@ -31,6 +32,7 @@ import ez.minar.utils.render.HudMotion;
 import ez.minar.utils.render.RenderUtil;
 import ez.minar.utils.render.msdf.Msdf;
 import ez.minar.utils.render.msdf.MsdfFont;
+import ez.minar.utils.render.msdf.MsdfGlyph;
 import ez.minar.utils.render.msdf.MsdfManager;
 import ez.minar.utils.render.pipeline.TexturePipeline;
 import ez.minar.utils.render.scissor.Scissor;
@@ -53,6 +55,7 @@ import net.minecraft.entity.effect.StatusEffects;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.network.packet.s2c.play.WorldTimeUpdateS2CPacket;
 import net.minecraft.registry.Registries;
 import net.minecraft.registry.entry.RegistryEntry;
 import net.minecraft.scoreboard.Scoreboard;
@@ -173,11 +176,19 @@ public class HUD extends Function {
     public final BooleanSetting targetHudLook = new BooleanSetting("Таргет по взгляду", true);
     public final ModeSetting targetHudArmor = new ModeSetting("Броня таргета", "Цифры", "Иконки", "Нет");
     public final TextSetting islandText = new TextSetting("Текст острова", "Next", 20);
-    public final ModeSetting colorMode = new ModeSetting("Цвет", "Статик", "Градиент", "Тема", "Радуга", "Пульс");
+    // "Тема" is the default: out of the box the HUD wears whatever accent the ClickGUI wears,
+    // so switching a theme repaints icons, keys, timers and the card tint in one go.
+    public final ModeSetting colorMode = new ModeSetting("Цвет", "Тема", "Градиент", "Радуга", "Пульс", "Статик");
     public final ColorSetting gradientColor1 = new ColorSetting("Цвет 1", new Color(0, 170, 255));
     public final ColorSetting gradientColor2 = new ColorSetting("Цвет 2", new Color(150, 0, 255));
     public final NumberSetting gradientSpeed = new NumberSetting("Скорость", 1.0, 0.1, 5.0, 0.1);
     public final NumberSetting gradientOffset = new NumberSetting("Смещение", 150.0, 10.0, 500.0, 10.0);
+    /** Accent text is painted per glyph across the sweep instead of one flat colour. */
+    public final BooleanSetting gradientText = new BooleanSetting("Градиент текста", true);
+    /** How much of the accent bleeds into the card and pill fills, in percent. */
+    public final NumberSetting backgroundTint = new NumberSetting("Тон фона", 12.0, 0.0, 60.0, 1.0);
+    /** Same, for the hairline outline: the accent edge is what reads as "glass" on the photos. */
+    public final NumberSetting outlineTint = new NumberSetting("Тон обводки", 35.0, 0.0, 100.0, 5.0);
 
     // --- Draggable Handlers ---
     private final HudDrag dragWorld = new HudDrag("Мир", 4f, 4f);
@@ -199,6 +210,8 @@ public class HUD extends Function {
      *  grows exactly as fast as the old label wipes out. */
     private final AnimatedValue islandMix = new AnimatedValue(500L, 0f, AnimatedValue.CARD);
     private final AnimatedValue fpsValue = new AnimatedValue(300L, 0f, AnimatedValue.SMOOTHSTEP);
+    private final AnimatedValue bpsValue = new AnimatedValue(240L, 0f, AnimatedValue.SMOOTHSTEP);
+    private final AnimatedValue tpsSmooth = new AnimatedValue(600L, 20f, AnimatedValue.SMOOTHSTEP);
     private final HudMotion worldMotion = new HudMotion();
     private final HudMotion playerMotion = new HudMotion();
     private final HudMotion targetMotion = new HudMotion();
@@ -273,7 +286,8 @@ public class HUD extends Function {
 
     public HUD() {
         Instance = this;
-        addSettings(elements, worldCompact, speedY, targetHudLook, targetHudArmor, islandText, colorMode, gradientColor1, gradientColor2, gradientSpeed, gradientOffset);
+        addSettings(elements, worldCompact, speedY, targetHudLook, targetHudArmor, islandText, colorMode,
+                gradientColor1, gradientColor2, gradientSpeed, gradientOffset, gradientText, backgroundTint, outlineTint);
         positions.put("Мир", dragWorld);
         positions.put("Игрок", dragPlayer);
         positions.put("Бинды", dragKeybinds);
@@ -367,38 +381,115 @@ public class HUD extends Function {
         return w;
     }
 
-    private static void drawCard(float x, float y, float w, float h, float radius, float blur) {
+    private void drawCard(float x, float y, float w, float h, float radius, float blur) {
         drawCard(x, y, w, h, radius, blur, 1.0f);
     }
 
-    /** The rect shader samples a 3x3 colour grid indexed iy*3+ix, so a vertical ramp is three rows. */
-    private static Color[] vGradient(Color top, Color mid, Color bottom) {
-        return new Color[]{top, top, top, mid, mid, mid, bottom, bottom, bottom};
+    /** Horizontal ramp for bars and fills: three columns of the same 3x3 grid. */
+    private static Color[] hGradient(Color left, Color right) {
+        Color mid = new Color(
+                (left.getRed() + right.getRed()) / 2,
+                (left.getGreen() + right.getGreen()) / 2,
+                (left.getBlue() + right.getBlue()) / 2,
+                (left.getAlpha() + right.getAlpha()) / 2);
+        return new Color[]{left, mid, right, left, mid, right, left, mid, right};
+    }
+
+    /** The accent sweep as a horizontal fill, already faded by an element's alpha. */
+    private Color[] accentFill(float alpha) {
+        return hGradient(withAlpha(accentAt(0f), alpha), withAlpha(accentAt(1f), alpha));
+    }
+
+    /**
+     * The 3x3 grid the rect shader wants, built from a vertical ramp that is also tinted left to
+     * right by the accent sweep. That diagonal is what gives the cards the coloured glass look of
+     * the reference shots instead of a flat charcoal slab.
+     */
+    private Color[] cardGradient(Color top, Color mid, Color bottom, float alpha, float amount) {
+        Color[] grid = new Color[9];
+        Color[] rows = {top, mid, bottom};
+        // The tint fades out towards the bottom of the card, like light falling off a surface.
+        float[] rowFade = {1.0f, 0.72f, 0.42f};
+        for (int iy = 0; iy < 3; iy++) {
+            for (int ix = 0; ix < 3; ix++) {
+                Color base = rows[iy];
+                if (amount > 0.001f) {
+                    base = mixRgb(base, accentAt(ix / 2f), amount * rowFade[iy]);
+                }
+                grid[iy * 3 + ix] = withAlpha(base, alpha);
+            }
+        }
+        return grid;
+    }
+
+    /** Accent-lit hairline: the same left-to-right sweep, so a card's edge matches its fill. */
+    private Color[] outlineGradient(float alpha) {
+        float amount = (float) (outlineTint.getValue() / 100.0);
+        Color[] grid = new Color[9];
+        for (int iy = 0; iy < 3; iy++) {
+            for (int ix = 0; ix < 3; ix++) {
+                Color edge = amount > 0.001f
+                        ? mixRgb(COLOR_BORDER, accentAt(ix / 2f), amount)
+                        : COLOR_BORDER;
+                // The top edge catches the most light, the bottom the least.
+                float fade = iy == 0 ? 1.0f : (iy == 1 ? 0.85f : 0.65f);
+                grid[iy * 3 + ix] = withAlpha(edge, alpha * fade);
+            }
+        }
+        return grid;
     }
 
     /** Same card, faded by an element's presence so it can ease in and out instead of popping. */
-    private static void drawCard(float x, float y, float w, float h, float radius, float blur, float alpha) {
+    private void drawCard(float x, float y, float w, float h, float radius, float blur, float alpha) {
+        if (alpha <= 0.004f) return;
+        float tint = (float) (backgroundTint.getValue() / 100.0);
         RenderUtil.blur(x, y, w, h, radius, blur * alpha);
-        RenderUtil.rect(x, y, w, h, radius, vGradient(withAlpha(CARD_TOP, alpha),
-                withAlpha(CARD_MID, alpha), withAlpha(CARD_BOTTOM, alpha)));
-        RenderUtil.outline(x, y, w, h, radius, 0.5f, withAlpha(COLOR_BORDER, alpha));
+        RenderUtil.rect(x, y, w, h, radius, cardGradient(CARD_TOP, CARD_MID, CARD_BOTTOM, alpha, tint));
+        RenderUtil.outline(x, y, w, h, radius, 0.5f, outlineGradient(alpha));
     }
 
-    private static void drawPill(float x, float y, float w, float h, float radius) {
+    private void drawPill(float x, float y, float w, float h, float radius) {
         drawPill(x, y, w, h, radius, 1.0f);
     }
 
     /** A row pill faded by its own alpha, so rows can slide in and out one at a time. */
-    private static void drawPill(float x, float y, float w, float h, float radius, float alpha) {
+    private void drawPill(float x, float y, float w, float h, float radius, float alpha) {
         if (alpha <= 0.004f) return;
-        RenderUtil.rect(x, y, w, h, radius, vGradient(withAlpha(PILL_TOP, alpha),
-                withAlpha(COLOR_PILL_BG, alpha), withAlpha(PILL_BOTTOM, alpha)));
-        RenderUtil.outline(x, y, w, h, radius, 0.5f, withAlpha(COLOR_BORDER, alpha));
+        // Pills sit on top of nothing but the world, so they carry a touch less accent than the
+        // cards do: enough to belong to the theme, not enough to read as a coloured button.
+        float tint = (float) (backgroundTint.getValue() / 100.0) * 0.75f;
+        RenderUtil.rect(x, y, w, h, radius, cardGradient(PILL_TOP, COLOR_PILL_BG, PILL_BOTTOM, alpha, tint));
+        RenderUtil.outline(x, y, w, h, radius, 0.5f, outlineGradient(alpha * 0.9f));
     }
 
-    /** Text top for a card row: centred on the glyph box with Rockstar's half-pixel optical lift. */
+    /** Text top for a card row: optically centred on the cap height, same as the icons beside it. */
     private static float cardTextY(float rowTop, float rowH) {
-        return rowTop + (rowH - HUD_TEXT) / 2f - 0.5f;
+        return textTop(rowTop + rowH / 2f);
+    }
+
+    // --- Stacked card header: one icon, one title, one set of metrics for all three lists ---
+    private static final float HEADER_INSET = 5.0f;
+    private static final float HEADER_ICON = 8.0f;
+    private static final float HEADER_GAP = 3.5f;
+    private static final float HEADER_TAIL = 6.0f;
+
+    private static float headerWidth(String title) {
+        return HEADER_INSET + HEADER_ICON + HEADER_GAP + getTextWidth(title) + HEADER_TAIL;
+    }
+
+    /**
+     * Header of a stacked card. Icon and title share one centre line and the icon wears the head of
+     * the accent sweep, so "Клавиши", "Эффекты" and "Персонал" are laid out by the same rule rather
+     * than by three copies of the same magic numbers.
+     */
+    private void drawHeader(DrawContext context, String title, Identifier icon,
+                            float x, float y, float w, float h, float alpha, float blur) {
+        drawCard(x, y, w, h, 5.0f, 4.0f * blur, alpha);
+        float centerY = y + h / 2f;
+        RenderUtil.texture(x + HEADER_INSET, centerY - HEADER_ICON / 2f, HEADER_ICON, HEADER_ICON, icon, 0f,
+                withAlpha(accentAt(0f), alpha));
+        drawText(context, title, x + HEADER_INSET + HEADER_ICON + HEADER_GAP, textTop(centerY),
+                withAlpha(Color.WHITE, alpha));
     }
 
     private void drawAccentDot(float cx, float cy) {
@@ -423,12 +514,35 @@ public class HUD extends Function {
         return Msdf.width(Msdf.SF_MEDIUM, text, ROW_TEXT);
     }
 
-    /** Rockstar centres a row on the font ascent, not the line box, so digits sit on the middle line. */
+    /** Every row centres its text the same way its icons are centred: on the cap height. */
     private static float rowTextTop(float centerY) {
-        float ascent = Msdf.SF_MEDIUM != null && Msdf.SF_MEDIUM.isLoaded()
-                ? Msdf.SF_MEDIUM.getAscender() * ROW_TEXT
-                : Msdf.height(Msdf.SF_MEDIUM, ROW_TEXT);
-        return centerY - ascent / 2f;
+        return textTop(centerY);
+    }
+
+    /**
+     * Top-of-line y that puts the cap height of the HUD font exactly on {@code centerY}.
+     *
+     * The MSDF pipeline places the baseline at {@code y + ascender * scale}, and the ascender runs
+     * well above the capitals, so centring on it (or on the em box) dropped every label about a
+     * pixel below the icon and the pill it shares a row with. The cap height is measured from the
+     * font's own 'H': its plane bounds carry the atlas padding on both sides, which cancels out in
+     * {@code 2 * bearingY - height}.
+     */
+    private static float textTop(float centerY) {
+        MsdfFont font = Msdf.SF_MEDIUM;
+        if (font == null || !font.isLoaded() || font.getEmSize() <= 0f) {
+            return centerY - HUD_TEXT / 2f;
+        }
+        float scale = HUD_TEXT / font.getEmSize();
+        float baseline;
+        MsdfGlyph cap = font.getGlyph('H');
+        if (cap != null && cap.height > 0f) {
+            baseline = centerY + (2f * cap.bearingY - cap.height) * scale / 2f;
+        } else {
+            // No 'H' in the atlas: fall back to a typical 0.7em cap height.
+            baseline = centerY + 0.7f * HUD_TEXT / 2f;
+        }
+        return baseline - font.getAscender() * scale;
     }
 
     /** A 10px wide slot holding a 2px dot at 50% text alpha, exactly like Rockstar's separator. */
@@ -443,43 +557,129 @@ public class HUD extends Function {
         return new Color(color.getRed(), color.getGreen(), color.getBlue(), a);
     }
 
-    /** Rockstar-style animated gradient color. index/total gives each element a unique phase. */
-    public Color getAccentColor(int index, int total) {
-        double time = System.currentTimeMillis() / 1000.0 * gradientSpeed.getValue();
-        double position = total > 1 ? (double) index / (total - 1) : 0;
-        double offset = gradientOffset.getValue() / 1000.0;
+    /** Blends rgb towards {@code towards} while keeping the base's own translucency. */
+    private static Color mixRgb(Color base, Color towards, float amount) {
+        float t = Math.clamp(amount, 0f, 1f);
+        return new Color(
+                Math.clamp(Math.round(base.getRed() + (towards.getRed() - base.getRed()) * t), 0, 255),
+                Math.clamp(Math.round(base.getGreen() + (towards.getGreen() - base.getGreen()) * t), 0, 255),
+                Math.clamp(Math.round(base.getBlue() + (towards.getBlue() - base.getBlue()) * t), 0, 255),
+                base.getAlpha());
+    }
 
-        Color c1 = gradientColor1.getColor();
-        Color c2 = gradientColor2.getColor();
+    /**
+     * Accent label: the sweep is sampled per glyph across the word, so a key or a timer carries the
+     * gradient rather than a single frozen sample of it. Single characters (and the static colour
+     * mode) take one flat sample, which is both cheaper and identical on screen.
+     */
+    private void drawAccentText(DrawContext context, String text, float x, float y, float alpha) {
+        drawAccentText(context, text, x, y, alpha, 0f, 1f);
+    }
 
-        switch (colorMode.getActiveMode()) {
-            case "Градиент": {
-                float progress = (float) ((Math.sin(time + position * Math.PI * 2 * offset) + 1) / 2.0);
-                return lerpColor(c1, c2, progress);
-            }
-            // The theme's own two colours drive the sweep, so the HUD follows whatever the ClickGUI
-            // is wearing; a single-colour theme gets the Watermark treatment of a lifted second stop.
-            case "Тема": {
-                Color t1 = ThemeManager.Theme_Color;
-                Color t2 = ThemeManager.twoColors ? ThemeManager.Theme_Color2 : lerpColor(t1, Color.WHITE, 0.25f);
-                float progress = (float) ((Math.sin(time + position * Math.PI * 2 * offset) + 1) / 2.0);
-                return lerpColor(t1, t2, progress);
-            }
-            case "Радуга":
-                return Color.getHSBColor((float) ((time + position * offset) % 1.0), 0.7f, 1.0f);
-            case "Пульс": {
-                float pulse = (float) ((Math.sin(time * 2) + 1) / 2.0);
-                return lerpColor(c1, c2, pulse);
-            }
-            case "Статик":
-            default:
-                return c1;
+    /**
+     * Same, but the word only covers {@code from..to} of the sweep - that is how several pills in
+     * one row share a single continuous gradient instead of each restarting it.
+     */
+    private void drawAccentText(DrawContext context, String text, float x, float y, float alpha,
+                                float from, float to) {
+        if (text == null || text.isEmpty() || alpha <= 0.004f) return;
+        float mid = (from + to) / 2f;
+        if (!gradientText.isEnabled() || text.length() < 2 || colorMode.getActiveMode().equals("Статик")) {
+            drawText(context, text, x, y, withAlpha(accentAt(mid), alpha));
+            return;
+        }
+        float total = getTextWidth(text);
+        if (total <= 0f) return;
+        float cursor = 0f;
+        for (int i = 0; i < text.length(); i++) {
+            String glyph = String.valueOf(text.charAt(i));
+            float advance = getTextWidth(glyph);
+            float t = from + (to - from) * ((cursor + advance / 2f) / total);
+            drawText(context, glyph, x + cursor, y, withAlpha(accentAt(t), alpha));
+            cursor += advance;
         }
     }
 
-    /** Overload without index: uses a single global phase. */
+    // --- Accent sweep -------------------------------------------------------------------------
+    // One gradient drives the whole HUD: every icon, key, timer, bar and card tint samples the same
+    // ramp at its own position, so the elements read as one surface lit by one light instead of a
+    // pile of independently coloured widgets.
+
+    /** The two stops of the sweep for this frame, in the mode the user picked. */
+    private Color[] accentStops() {
+        double time = System.currentTimeMillis() / 1000.0 * gradientSpeed.getValue();
+        Color c1 = gradientColor1.getColor();
+        Color c2 = gradientColor2.getColor();
+        return switch (colorMode.getActiveMode()) {
+            case "Градиент" -> new Color[]{c1, c2};
+            // The rainbow rolls its own hue, the sweep only spreads the two stops apart.
+            case "Радуга" -> {
+                float hue = (float) ((time * 0.35) % 1.0);
+                yield new Color[]{Color.getHSBColor(hue, 0.68f, 1.0f),
+                        Color.getHSBColor((hue + 0.12f) % 1.0f, 0.68f, 1.0f)};
+            }
+            case "Пульс" -> new Color[]{c1, c2};
+            case "Статик" -> new Color[]{c1, c1};
+            // Default: the ClickGUI's own accent. getGuiAccent() is what the menu and the watermark
+            // read, so a theme switch repaints the HUD in the same frame; a one-colour theme gets
+            // the Watermark treatment of a lifted second stop so the ramp still has somewhere to go.
+            default -> {
+                // A named theme is what the ClickGUI paints itself with, so it wins; without one
+                // the HUD follows the plain accent the rest of the client (ESP, chat, watermark)
+                // reads, instead of drifting off to the built-in default on its own.
+                Color t1 = ThemeManager.activeNamedTheme >= 0 ? ThemeManager.getGuiAccent() : ThemeManager.Theme_Color;
+                Color t2 = ThemeManager.twoColors ? ThemeManager.Theme_Color2 : lerpColor(t1, Color.WHITE, 0.3f);
+                yield new Color[]{t1, t2};
+            }
+        };
+    }
+
+    /**
+     * Position on the ramp at {@code t} (0 = start of an element, 1 = its end). The phase travels
+     * with time, so the gradient flows through the HUD instead of sitting still; "Пульс" drops the
+     * spatial term so every element breathes together, "Статик" collapses the ramp entirely.
+     */
+    private float accentPhase(float t) {
+        String mode = colorMode.getActiveMode();
+        if (mode.equals("Статик")) return 0f;
+        double time = System.currentTimeMillis() / 1000.0 * gradientSpeed.getValue();
+        double spread = mode.equals("Пульс") ? 0.0 : gradientOffset.getValue() / 300.0;
+        return (float) (0.5 + 0.5 * Math.sin((time + Math.clamp(t, 0f, 1f) * spread) * Math.PI * 2.0));
+    }
+
+    // The sweep is sampled dozens of times per frame (nine per card, one per glyph of an accent
+    // label), so the trigonometry and the stop lookup run once per millisecond and everything else
+    // interpolates between the three cached samples.
+    private final Color[] accentCache = {Color.WHITE, Color.WHITE, Color.WHITE};
+    private long accentCacheAt = -1L;
+
+    private void refreshAccent() {
+        Color[] stops = accentStops();
+        accentCache[0] = lerpColor(stops[0], stops[1], accentPhase(0f));
+        accentCache[1] = lerpColor(stops[0], stops[1], accentPhase(0.5f));
+        accentCache[2] = lerpColor(stops[0], stops[1], accentPhase(1f));
+        accentCacheAt = System.currentTimeMillis();
+    }
+
+    /** Accent colour sampled at {@code t} along an element. */
+    public Color accentAt(float t) {
+        if (accentCacheAt != System.currentTimeMillis()) refreshAccent();
+        float position = Math.clamp(t, 0f, 1f) * 2f;
+        int index = (int) position;
+        if (index >= 2) return accentCache[2];
+        float fraction = position - index;
+        if (fraction < 0.002f) return accentCache[index];
+        return lerpColor(accentCache[index], accentCache[index + 1], fraction);
+    }
+
+    /** Rockstar-style animated gradient color. index/total gives each element a unique phase. */
+    public Color getAccentColor(int index, int total) {
+        return accentAt(total > 1 ? (float) index / (total - 1) : 0f);
+    }
+
+    /** Overload without index: the middle of the sweep, which is what a lone icon should wear. */
     public Color getAccentColor() {
-        return getAccentColor(0, 1);
+        return accentAt(0.5f);
     }
 
     private static Color lerpColor(Color a, Color b, float t) {
@@ -501,12 +701,50 @@ public class HUD extends Function {
                 // through the matrix stack or the icon sits still while its card grows.
                 Matrix3x2fStack matrices = context.getMatrices();
                 HudRenderUtils.scaleAround(matrices, popCx, popCy, popS);
-                context.drawGuiTexture(RenderPipelines.GUI_TEXTURED, texture, (int) x, (int) y, (int) size, (int) size);
+                // Rounded, not truncated: a half-pixel row offset used to drop the effect glyph
+                // below the label sitting next to it.
+                context.drawGuiTexture(RenderPipelines.GUI_TEXTURED, texture,
+                        Math.round(x), Math.round(y), Math.round(size), Math.round(size));
                 HudRenderUtils.popMatrix(matrices);
                 return;
             }
         } catch (Exception ignored) {}
         RenderUtil.texture(x, y, size, size, ICON_POTION, 0f, getAccentColor());
+    }
+
+    // --- Server tick rate -----------------------------------------------------------------
+    // A server sends the world time every 20 ticks, so the gap between two of those packets is how
+    // long 20 ticks actually took. A short ring buffer keeps the readout from twitching on a single
+    // late packet, and anything absurd (a join, a lag spike longer than ten seconds) resets it.
+    private static final double[] TPS_SAMPLES = new double[5];
+    private static int tpsIndex;
+    private static int tpsCount;
+    private static long lastTimeUpdate;
+
+    @EventHandler
+    public void onPacketReceive(PacketReceiveEvent event) {
+        if (!(event.getPacket() instanceof WorldTimeUpdateS2CPacket)) return;
+        long now = System.currentTimeMillis();
+        long previous = lastTimeUpdate;
+        lastTimeUpdate = now;
+        if (previous == 0L) return;
+        double seconds = (now - previous) / 1000.0;
+        if (seconds < 0.2 || seconds > 10.0) {
+            tpsIndex = 0;
+            tpsCount = 0;
+            return;
+        }
+        TPS_SAMPLES[tpsIndex] = Math.clamp(20.0 / seconds, 0.0, 20.0);
+        tpsIndex = (tpsIndex + 1) % TPS_SAMPLES.length;
+        tpsCount = Math.min(tpsCount + 1, TPS_SAMPLES.length);
+    }
+
+    /** Measured tick rate, or a flat 20 while nothing has been measured yet. */
+    private float serverTps() {
+        if (tpsCount == 0 || System.currentTimeMillis() - lastTimeUpdate > 6000L) return 20f;
+        double sum = 0.0;
+        for (int i = 0; i < tpsCount; i++) sum += TPS_SAMPLES[i];
+        return (float) (sum / tpsCount);
     }
 
     // --- Component 1: World Info (hud.world) ---
@@ -529,7 +767,7 @@ public class HUD extends Function {
             }
         }
 
-        String tpsNum = "20";
+        String tpsNum = String.format(Locale.ROOT, "%.1f", tpsSmooth.to(serverTps()));
         String tpsLabel = " TPS";
 
         float cW = rowWidth(coords);
@@ -554,7 +792,8 @@ public class HUD extends Function {
         float textY = rowTextTop(centerY);
 
         drawCard(x, y, w, h, radius, 4.0f * worldMotion.blur(), a);
-        RenderUtil.texture(x + ROW_INSET, centerY - ROW_ICON / 2f, ROW_ICON, ROW_ICON, ICON_WORLD, 0f, withAlpha(getAccentColor(), a));
+        RenderUtil.texture(x + ROW_INSET, centerY - ROW_ICON / 2f, ROW_ICON, ROW_ICON, ICON_WORLD, 0f,
+                withAlpha(accentAt(0f), a));
 
         float curX = x + ROW_INSET + ROW_ICON + ROW_ICON_GAP;
 
@@ -583,7 +822,9 @@ public class HUD extends Function {
         double dist = speedY.isEnabled()
                 ? Math.hypot(mc.player.getY() - mc.player.lastRenderY, Math.hypot(dx, dz))
                 : Math.hypot(dx, dz);
-        String speedNum = String.format(Locale.ROOT, "%.2f", dist * 20.0);
+        // The raw per-frame delta flickers through three digits a second; the same smoothstep the
+        // FPS counter uses settles it without adding any visible lag.
+        String speedNum = String.format(Locale.ROOT, "%.2f", bpsValue.to((float) (dist * 20.0)));
         String speedLabel = " BPS";
 
         float fNumW = rowWidth(fpsNum);
@@ -607,7 +848,8 @@ public class HUD extends Function {
         float textY = rowTextTop(centerY);
 
         drawCard(x, y, w, h, radius, 4.0f * playerMotion.blur(), a);
-        RenderUtil.texture(x + ROW_INSET, centerY - ROW_ICON / 2f, ROW_ICON, ROW_ICON, ICON_PLAYER, 0f, withAlpha(getAccentColor(), a));
+        RenderUtil.texture(x + ROW_INSET, centerY - ROW_ICON / 2f, ROW_ICON, ROW_ICON, ICON_PLAYER, 0f,
+                withAlpha(accentAt(0f), a));
 
         float curX = x + ROW_INSET + ROW_ICON + ROW_ICON_GAP;
 
@@ -636,8 +878,7 @@ public class HUD extends Function {
         float rowH = CARD_ROW_H;
         float spacing = CARD_GAP;
 
-        float headerTitleW = getTextWidth("Клавиши");
-        float headerW = 5f + 8f + 3f + headerTitleW + 6f;
+        float headerW = headerWidth("Клавиши");
 
         // Rows draw from a cached payload, so a module switched off keeps its label on screen while
         // the pill fades out. The cache is pruned against the tracked rows each frame.
@@ -656,7 +897,7 @@ public class HUD extends Function {
 
         float[] rowAlpha = new float[keys.size()];
         for (int i = 0; i < keys.size(); i++) {
-            rowAlpha[i] = keybindsMotion.rowAlpha(keys.get(i), showing);
+            rowAlpha[i] = keybindsMotion.rowAlpha(keys.get(i), showing, i);
         }
         List<String> fading = new ArrayList<>(keybindsMotion.lingeringRows(keys));
         float[] fadingAlpha = new float[fading.size()];
@@ -689,9 +930,7 @@ public class HUD extends Function {
         float popS = keybindsMotion.scale(0.86f);
         RenderUtil.setPopScale(popCx, popCy, popS);
 
-        drawCard(x, y, headerW, headerH, 5.0f, 4.0f * keybindsMotion.blur(), a);
-        RenderUtil.texture(x + 5f, y + (headerH - 8f) / 2f, 8f, 8f, ICON_KEYBOARD, 0f, withAlpha(getAccentColor(), a));
-        drawText(context, "Клавиши", x + 5f + 8f + 3f, cardTextY(y, headerH), withAlpha(Color.WHITE, a));
+        drawHeader(context, "Клавиши", ICON_KEYBOARD, x, y, headerW, headerH, a, keybindsMotion.blur());
 
         float curY = y + headerH + spacing;
         int totalRows = Math.max(1, keys.size() + fading.size());
@@ -723,8 +962,11 @@ public class HUD extends Function {
         drawText(context, row[0], left + PILL_PAD / 2f, textY, withAlpha(Color.WHITE, alpha));
 
         drawPill(left + nameW + PILL_PAD + 3f, rowY, keyW + PILL_PAD, rowH, PILL_RADIUS, alpha);
-        Color keyAccent = getAccentColor(rowIndex, totalRows);
-        drawText(context, row[1], left + nameW + PILL_PAD + 3f + PILL_PAD / 2f, textY, withAlpha(keyAccent, alpha));
+        // Each row owns a slice of the sweep, so a stack of keybinds reads as one gradient running
+        // down the card rather than as N independently tinted labels.
+        float rowStart = totalRows > 1 ? (float) rowIndex / totalRows : 0f;
+        float rowEnd = totalRows > 1 ? (float) (rowIndex + 1) / totalRows : 1f;
+        drawAccentText(context, row[1], left + nameW + PILL_PAD + 3f + PILL_PAD / 2f, textY, alpha, rowStart, rowEnd);
 
         return y + (rowH + spacing) * alpha;
     }
@@ -740,8 +982,7 @@ public class HUD extends Function {
         float rowH = CARD_ROW_H;
         float spacing = CARD_GAP;
 
-        float headerTitleW = getTextWidth("Эффекты");
-        float headerW = 5f + 8f + 3f + headerTitleW + 6f;
+        float headerW = headerWidth("Эффекты");
 
         List<String> keys = new ArrayList<>();
         if (effects.isEmpty()) {
@@ -777,7 +1018,7 @@ public class HUD extends Function {
 
         float[] rowAlpha = new float[keys.size()];
         for (int i = 0; i < keys.size(); i++) {
-            rowAlpha[i] = potionsMotion.rowAlpha(keys.get(i), showing);
+            rowAlpha[i] = potionsMotion.rowAlpha(keys.get(i), showing, i);
         }
         List<String> fading = new ArrayList<>(potionsMotion.lingeringRows(keys));
         float[] fadingAlpha = new float[fading.size()];
@@ -808,9 +1049,7 @@ public class HUD extends Function {
         float popS = potionsMotion.scale(0.86f);
         RenderUtil.setPopScale(popCx, popCy, popS);
 
-        drawCard(x, y, headerW, headerH, 5.0f, 4.0f * potionsMotion.blur(), a);
-        RenderUtil.texture(x + 5f, y + (headerH - 8f) / 2f, 8f, 8f, ICON_POTION, 0f, withAlpha(getAccentColor(), a));
-        drawText(context, "Эффекты", x + 5f + 8f + 3f, cardTextY(y, headerH), withAlpha(Color.WHITE, a));
+        drawHeader(context, "Эффекты", ICON_POTION, x, y, headerW, headerH, a, potionsMotion.blur());
 
         float curY = y + headerH + spacing;
         int totalRows = Math.max(1, keys.size() + fading.size());
@@ -845,8 +1084,9 @@ public class HUD extends Function {
 
         float durX = left + ICON_PILL + 3f + nameW + PILL_PAD + 3f;
         drawPill(durX, y, durW + PILL_PAD, rowH, PILL_RADIUS, alpha);
-        Color durAccent = getAccentColor(rowIndex, totalRows);
-        drawText(context, dur, durX + PILL_PAD / 2f, textY, withAlpha(durAccent, alpha));
+        float rowStart = totalRows > 1 ? (float) rowIndex / totalRows : 0f;
+        float rowEnd = totalRows > 1 ? (float) (rowIndex + 1) / totalRows : 1f;
+        drawAccentText(context, dur, durX + PILL_PAD / 2f, textY, alpha, rowStart, rowEnd);
 
         return y + (rowH + spacing) * alpha;
     }
@@ -918,7 +1158,7 @@ public class HUD extends Function {
         float maxHp = currentTarget.getMaxHealth();
         String hpStr = String.format(Locale.ROOT, "%.1f", hp);
         float hpW = getTextWidth(hpStr);
-        drawText(context, hpStr, x + w - 6f - hpW, y + 5.0f, withAlpha(getAccentColor(), a));
+        drawAccentText(context, hpStr, x + w - 6f - hpW, y + 5.0f, a);
 
         // Health bar
         float barX = x + 30f;
@@ -932,8 +1172,10 @@ public class HUD extends Function {
         // Bar background track
         RenderUtil.rect(barX, barY, barW, barH, 2.25f, withAlpha(new Color(25, 26, 35, 220), a));
 
-        // Health fill
-        RenderUtil.rect(barX, barY, barW * healthFill, barH, 2.25f, withAlpha(getAccentColor(), a));
+        // Health fill: the sweep again, so the bar is lit by the same gradient as the card edge.
+        if (healthFill > 0.001f) {
+            RenderUtil.rect(barX, barY, barW * healthFill, barH, 2.25f, accentFill(a));
+        }
 
         // Absorption fill: retargeted even at zero, or the yellow segment would stick once
         // absorption wears off.
@@ -1035,8 +1277,7 @@ public class HUD extends Function {
         float rowH = CARD_ROW_H;
         float spacing = CARD_GAP;
 
-        float headerTitleW = getTextWidth("Персонал");
-        float headerW = 5f + 8f + 3f + headerTitleW + 6f;
+        float headerW = headerWidth("Персонал");
 
         List<String> keys = new ArrayList<>();
         if (staff.isEmpty()) {
@@ -1051,7 +1292,7 @@ public class HUD extends Function {
 
         float[] rowAlpha = new float[keys.size()];
         for (int i = 0; i < keys.size(); i++) {
-            rowAlpha[i] = staffMotion.rowAlpha(keys.get(i), showing);
+            rowAlpha[i] = staffMotion.rowAlpha(keys.get(i), showing, i);
         }
         List<String> fading = new ArrayList<>(staffMotion.lingeringRows(keys));
         float[] fadingAlpha = new float[fading.size()];
@@ -1080,9 +1321,7 @@ public class HUD extends Function {
         float x = pos[0], y = pos[1];
         RenderUtil.setPopScale(x + maxRowW / 2f, y + (headerH + spacing + stack) / 2f, staffMotion.scale(0.86f));
 
-        drawCard(x, y, headerW, headerH, 5.0f, 4.0f * staffMotion.blur(), a);
-        RenderUtil.texture(x + 5f, y + (headerH - 8f) / 2f, 8f, 8f, ICON_STAFF, 0f, withAlpha(getAccentColor(), a));
-        drawText(context, "Персонал", x + 5f + 8f + 3f, cardTextY(y, headerH), withAlpha(Color.WHITE, a));
+        drawHeader(context, "Персонал", ICON_STAFF, x, y, headerW, headerH, a, staffMotion.blur());
 
         float curY = y + headerH + spacing;
         for (int i = 0; i < keys.size(); i++) {
@@ -1194,19 +1433,32 @@ public class HUD extends Function {
         NoticeItem alert = newestIslandNotice();
         if (alert != islandNotice) islandNotice = alert;
 
-        boolean pvp = ez.minar.utils.render.PvpTracker.isInPvp() || ez.minar.utils.render.PvpTracker.getPvpSeconds() > 0;
+        // A dataset being written outranks everything else the island could say: it is a mode the
+        // player switched on by hand and it has to stay visible until they switch it off.
+        boolean recording = ez.minar.system.neuro.NeuroManager.isRecording();
+        String recordTime = "";
+        if (recording) {
+            int seconds = Math.max(0, ez.minar.system.neuro.NeuroManager.recordedTicks()) / 20;
+            recordTime = String.format(Locale.ROOT, "%d:%02d", seconds / 60, seconds % 60);
+        }
+
+        boolean pvp = !recording && (ez.minar.utils.render.PvpTracker.isInPvp() || ez.minar.utils.render.PvpTracker.getPvpSeconds() > 0);
         int pvpSec = ez.minar.utils.render.PvpTracker.getPvpSeconds();
 
         MediaSession media = MediaManager.current();
-        ClientBossBar boss = pvp ? null : bossBarForIsland();
+        ClientBossBar boss = (pvp || recording) ? null : bossBarForIsland();
         boolean bossState = boss != null;
         float bossHealth = islandBossHealth.to(bossState ? boss.getPercent() : 0f);
-        boolean music = !pvp && !bossState && media.hasTrack();
+        boolean music = !recording && !pvp && !bossState && media.hasTrack();
 
         String baseText;
         Color baseColor;
         Identifier baseIcon;
-        if (pvp) {
+        if (recording) {
+            baseText = "Запись нейро";
+            baseColor = COLOR_ADMIN;
+            baseIcon = null;
+        } else if (pvp) {
             baseText = "В бою";
             baseColor = TEXT_CORAL;
             baseIcon = ICON_TARGET;
@@ -1260,7 +1512,10 @@ public class HUD extends Function {
         String pvpNum = pvp && pvpSec > 0 ? String.valueOf(pvpSec) : "";
         pvpDigits.update(pvpNum);
         float pvpBadgeW = pvpNum.isEmpty() ? 0f : 3f + 6f + pvpDigits.width(Msdf.SF_BOLD, PVP_DIGIT_SIZE, 0.5f);
-        float baseW = 4f + leadIcon + baseLabelW + pvpBadgeW + 5f;
+        // The recording timer rides in a red badge ahead of the label, the way the reference shot
+        // shows it; the badge owns its own width so the pill grows with the clock, not with the text.
+        float recBadgeW = recording ? getTextWidth(recordTime) + 8f + 4f : 0f;
+        float baseW = 4f + recBadgeW + leadIcon + baseLabelW + pvpBadgeW + 5f;
         // The transport row only means something over a track, so leaving the music state closes it.
         // Leaving the editor closes it too: outside chat there is no way to press the buttons.
         if (!media.hasTrack() || !(mc.currentScreen instanceof ChatScreen)) islandOpen = false;
@@ -1347,29 +1602,42 @@ public class HUD extends Function {
                     withAlpha(baseColor, ia * chrome));
         }
 
-        drawText(context, clock, left, y + 3f, withAlpha(TEXT_MUTED, ia));
+        drawText(context, clock, left, textTop(y + baseH / 2f), withAlpha(TEXT_MUTED, ia));
 
         float iconX = x + 4f;
         float outAlpha = Math.clamp(1f - alertAlpha * 1.5f, 0f, 1f) * ia;
         float inAlpha = Math.clamp((alertAlpha - 0.2f) / 0.8f, 0f, 1f) * ia;
         if (outAlpha > 0f) {
-            float baseContentW = leadIcon + baseLabelW + pvpBadgeW;
+            float baseContentW = recBadgeW + leadIcon + baseLabelW + pvpBadgeW;
             float baseStartX = x + (w - baseContentW) / 2f;
-            if (baseIcon != null) {
-                RenderUtil.texture(baseStartX, y + (baseH - 8f) / 2f, 8f, 8f, baseIcon, 0f, withAlpha(baseColor, outAlpha));
+            if (recording) {
+                // A slow breath on the badge, so the indicator reads as live without a blinking dot
+                // fighting the rest of the HUD for attention.
+                float pulse = 0.78f + 0.22f * (float) Math.sin(now / 520.0);
+                float badgeW = recBadgeW - 4f;
+                float badgeH = 11f;
+                float badgeY = y + (baseH - badgeH) / 2f;
+                RenderUtil.rect(baseStartX, badgeY, badgeW, badgeH, 3f, withAlpha(COLOR_ADMIN, outAlpha * pulse));
+                drawText(context, recordTime, baseStartX + 4f, textTop(y + baseH / 2f),
+                        withAlpha(Color.WHITE, outAlpha));
             }
-            float textX = baseStartX + leadIcon;
+            if (baseIcon != null) {
+                RenderUtil.texture(baseStartX + recBadgeW, y + (baseH - 8f) / 2f, 8f, 8f, baseIcon, 0f,
+                        withAlpha(baseColor, outAlpha));
+            }
+            float textX = baseStartX + recBadgeW + leadIcon;
             float fullW = getTextWidth(baseText);
             if (fullW > baseLabelW + 0.5f) {
                 Scissor.push(textX, y, baseLabelW, baseH);
-                drawText(context, baseText, textX - marqueeOffset(fullW, baseLabelW), y + 3f, withAlpha(Color.WHITE, outAlpha));
+                drawText(context, baseText, textX - marqueeOffset(fullW, baseLabelW), textTop(y + baseH / 2f),
+                        withAlpha(Color.WHITE, outAlpha));
                 Scissor.pop();
             } else {
-                drawText(context, baseText, textX, y + 3f, withAlpha(Color.WHITE, outAlpha));
+                drawText(context, baseText, textX, textTop(y + baseH / 2f), withAlpha(Color.WHITE, outAlpha));
             }
             if (!pvpNum.isEmpty()) {
                 float badgeW = pvpBadgeW - 3f;
-                float badgeX = baseStartX + leadIcon + baseLabelW + 3f;
+                float badgeX = baseStartX + recBadgeW + leadIcon + baseLabelW + 3f;
                 float badgeH = 11f;
                 float badgeY = y + (baseH - badgeH) / 2f;
                 RenderUtil.rect(badgeX, badgeY, badgeW, badgeH, 3f, withAlpha(COLOR_ADMIN, outAlpha));
@@ -1384,7 +1652,8 @@ public class HUD extends Function {
             float ringCx = alertStartX + 3f;
             RenderUtil.circleOutline(ringCx, y + baseH / 2f, 3.5f, 1.2f, 0f, 1f, withAlpha(Color.WHITE, inAlpha * 0.16f));
             RenderUtil.circleOutline(ringCx, y + baseH / 2f, 3.5f, 1.2f, -90f, alertProgress, withAlpha(alertColor, inAlpha));
-            drawText(context, activeAlertText, alertStartX + 6f + 4f, y + 3f, withAlpha(Color.WHITE, inAlpha));
+            drawText(context, activeAlertText, alertStartX + 6f + 4f, textTop(y + baseH / 2f),
+                    withAlpha(Color.WHITE, inAlpha));
         }
 
         // The label row keeps its own centre so opening the panel does not slide the top row down.

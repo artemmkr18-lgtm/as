@@ -187,6 +187,17 @@ public final class NeuroManager {
         return recorder.isRecording();
     }
 
+    /** Ticks written so far, for the HUD's recording indicator. */
+    public static int recordedTicks() {
+        return recorder.getRecordedTicks();
+    }
+
+    /** Name of the dataset currently being written, or an empty string. */
+    public static String recordingName() {
+        String name = recorder.getSessionName();
+        return name == null ? "" : name;
+    }
+
     public static void play(String name) {
         loadModel(name);
     }

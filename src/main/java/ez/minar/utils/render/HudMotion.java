@@ -1,6 +1,7 @@
 package ez.minar.utils.render;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -27,6 +28,10 @@ public final class HudMotion {
 
     /** UiNode: row entrance duration. */
     public static final long ROW_MS = 240L;
+    /** Delay between two rows of the same list entering, so a stack cascades instead of blinking. */
+    public static final long ROW_STAGGER_MS = 45L;
+    /** Past this many rows the cascade stops growing, or a long list would take a second to arrive. */
+    private static final int ROW_STAGGER_CAP = 6;
     /** ScriptInternal107: a row travels 6px while it fades. */
     public static final float ROW_SLIDE = 6.0f;
 
@@ -39,6 +44,7 @@ public final class HudMotion {
 
     /** Stacked-card rows keyed by their label; the caller keeps the row's payload. */
     private final Map<String, AnimatedValue> rows = new LinkedHashMap<>();
+    private final Map<String, Long> rowsReadyAt = new HashMap<>();
     private final Set<String> rowsLive = new HashSet<>();
     private final List<String> rowsLingering = new ArrayList<>();
 
@@ -91,6 +97,7 @@ public final class HudMotion {
         visible.snap(showing ? 1f : 0f);
         blurAnim.snap(showing ? 1f : 0f);
         rows.clear();
+        rowsReadyAt.clear();
         rowsLive.clear();
     }
 
@@ -100,14 +107,27 @@ public final class HudMotion {
      * row collapses the stack instead of punching a hole in it.
      */
     public float rowAlpha(String key, boolean live) {
+        return rowAlpha(key, live, 0);
+    }
+
+    /**
+     * Same, with the row's place in its list. A row entering for the first time waits its index out
+     * before it starts, so a card that opens with four rows deals them one after another; rows that
+     * leave never wait, because a collapsing stack has to keep up with its own height.
+     */
+    public float rowAlpha(String key, boolean live, int index) {
         if (live) rowsLive.add(key);
         AnimatedValue value = rows.get(key);
         if (value == null) {
             value = new AnimatedValue(ROW_MS, 0f, ROW);
             rows.put(key, value);
+            rowsReadyAt.put(key, System.currentTimeMillis()
+                    + Math.min(Math.max(index, 0), ROW_STAGGER_CAP) * ROW_STAGGER_MS);
         }
         value.setCurve(ROW);
-        return Math.clamp(value.to(live ? 1f : 0f), 0f, 1f);
+        Long readyAt = rowsReadyAt.get(key);
+        boolean waiting = live && readyAt != null && System.currentTimeMillis() < readyAt;
+        return Math.clamp(value.to(live && !waiting ? 1f : 0f), 0f, 1f);
     }
 
     /** How far a row still has to travel at this alpha, in Rockstar's 6px. */
@@ -153,6 +173,7 @@ public final class HudMotion {
     /** Drops fully faded rows and reopens the live set for the next frame. */
     public void endRows() {
         rows.entrySet().removeIf(row -> !rowsLive.contains(row.getKey()) && row.getValue().get() <= EPSILON);
+        rowsReadyAt.keySet().retainAll(rows.keySet());
         rowsLive.clear();
     }
 }
