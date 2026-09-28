@@ -15,7 +15,6 @@ import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.hud.InGameHud;
 import net.minecraft.client.gui.hud.PlayerListHud;
-import net.minecraft.client.network.ClientPlayerInteractionManager;
 import net.minecraft.client.render.RenderTickCounter;
 import net.minecraft.entity.Entity;
 import net.minecraft.scoreboard.Scoreboard;
@@ -28,9 +27,7 @@ import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
-import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(InGameHud.class)
 public abstract class InGameHudMixin {
@@ -41,17 +38,10 @@ public abstract class InGameHudMixin {
     @Shadow
     private PlayerListHud playerListHud;
 
-    @Shadow
-    protected abstract void renderHotbarItem(DrawContext context, int x, int y, RenderTickCounter tickCounter,
-                                             net.minecraft.entity.player.PlayerEntity player,
-                                             net.minecraft.item.ItemStack stack, int seed);
-
     @Unique
     private float minar$tabAnimValue = 0.0f;
     @Unique
     private long minar$lastTabUpdate = System.currentTimeMillis();
-    @Unique
-    private boolean minar$mainHudShifted;
 
     @Inject(method = "render", at = @At("HEAD"))
     private void triggerPreHudRenderEvent(DrawContext context, RenderTickCounter tickCounter, CallbackInfo ci) {
@@ -108,24 +98,8 @@ public abstract class InGameHudMixin {
         drawContext.getMatrices().popMatrix();
     }
 
-    @Inject(method = "renderMainHud", at = @At("HEAD"))
-    private void rockstar$shiftVanillaMainHud(DrawContext drawContext, RenderTickCounter renderTickCounter, CallbackInfo callbackInfo) {
-        if (HUD.Instance != null && HUD.Instance.isEnabled() && HUD.Instance.hotbar.isEnabled()) {
-            float shift = HUD.getHotbarShift();
-            if (shift > 0.0f) {
-                drawContext.getMatrices().pushMatrix();
-                drawContext.getMatrices().translate(0.0f, -shift);
-                this.minar$mainHudShifted = true;
-            }
-        }
-    }
-
     @Inject(method = "renderMainHud", at = @At("TAIL"))
-    private void rockstar$popVanillaMainHud(DrawContext drawContext, RenderTickCounter renderTickCounter, CallbackInfo callbackInfo) {
-        if (this.minar$mainHudShifted) {
-            this.minar$mainHudShifted = false;
-            drawContext.getMatrices().popMatrix();
-        }
+    private void rockstar$postHudRenderEvent(DrawContext drawContext, RenderTickCounter renderTickCounter, CallbackInfo callbackInfo) {
         EventBus.post(new HudRenderEvent(drawContext, renderTickCounter.getTickProgress(false)));
     }
 
@@ -153,54 +127,11 @@ public abstract class InGameHudMixin {
         }
     }
 
-    @Inject(method = "renderHotbar", at = @At("HEAD"), cancellable = true)
-    private void minar$cancelDefaultHotbar(DrawContext context, RenderTickCounter tickCounter, CallbackInfo ci) {
-        if (HUD.shouldDisableDefaultHotbar() && HUD.Instance != null && this.client.player != null) {
-            HUD.Instance.renderHotbarXyeta(context, tickCounter,
-                    (x, y, tick, player, stack, seed) ->
-                            renderHotbarItem(context, x, y, tick, player, stack, seed));
-            ci.cancel();
-        }
-    }
-
-    @Inject(method = "renderStatusBars", at = @At("HEAD"), cancellable = true)
-    private void minar$cancelDefaultStatusBars(DrawContext context, CallbackInfo ci) {
-        if (HUD.shouldHideStatusBars()) {
-            ci.cancel();
-        }
-    }
-
     @Inject(method = "renderStatusEffectOverlay", at = @At("HEAD"), cancellable = true)
     private void minar$hideDefaultStatusEffectIcons(DrawContext context, RenderTickCounter tickCounter, CallbackInfo ci) {
         if (HUD.shouldHideDefaultStatusEffectIcons()) {
             ci.cancel();
         }
-    }
-
-    @Inject(method = "renderHeldItemTooltip", at = @At("HEAD"), cancellable = true)
-    private void minar$cancelDefaultHeldItemTooltip(DrawContext context, CallbackInfo ci) {
-        if (HUD.shouldHideStatusBars()) {
-            ci.cancel();
-        }
-    }
-
-    @Inject(method = "shouldShowExperienceBar", at = @At("HEAD"), cancellable = true)
-    private void minar$hideDefaultExperienceBar(CallbackInfoReturnable<Boolean> cir) {
-        if (HUD.shouldHideStatusBars()) {
-            cir.setReturnValue(false);
-        }
-    }
-
-    @Redirect(method = "getCurrentBarType",
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/network/ClientPlayerInteractionManager;hasExperienceBar()Z"))
-    private boolean minar$disableExperienceBarType(ClientPlayerInteractionManager interactionManager) {
-        return !HUD.shouldHideStatusBars() && interactionManager != null && interactionManager.hasExperienceBar();
-    }
-
-    @Redirect(method = "renderMainHud",
-            at = @At(value = "INVOKE", target = "Lnet/minecraft/client/network/ClientPlayerInteractionManager;hasExperienceBar()Z"))
-    private boolean minar$disableExperienceLevelText(ClientPlayerInteractionManager interactionManager) {
-        return !HUD.shouldHideStatusBars() && interactionManager != null && interactionManager.hasExperienceBar();
     }
 
     @Inject(method = "renderScoreboardSidebar", at = @At("HEAD"), cancellable = true)

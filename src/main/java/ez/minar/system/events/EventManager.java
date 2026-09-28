@@ -5,10 +5,8 @@ import ez.minar.system.api.FunctionManager;
 import ez.minar.system.events.impl.KeyEvent;
 import ez.minar.system.events.impl.UpdateEvent;
 import ez.minar.system.features.render.HUD;
-import ez.minar.system.features.render.ClickGuiSettings;
-import ez.minar.system.menu.DropClickGui;
-import ez.minar.system.managers.UnhookManager;
 import ez.minar.system.menu.ClickGui;
+import ez.minar.system.managers.UnhookManager;
 import ez.minar.system.settings.impl.KeybindSetting;
 import net.minecraft.client.MinecraftClient;
 import org.lwjgl.glfw.GLFW;
@@ -24,15 +22,7 @@ public class EventManager {
 
     MinecraftClient mc = MinecraftClient.getInstance();
     public static ClickGui clickGui = new ClickGui();
-    public static final DropClickGui dropClickGui = new DropClickGui();
 
-    public static void applyClickGuiStyle() {
-        MinecraftClient client = MinecraftClient.getInstance();
-        if (client.currentScreen != clickGui && client.currentScreen != dropClickGui) return;
-        ClickGuiSettings settings = FunctionManager.getFunction(ClickGuiSettings.class);
-        var selected = settings != null && settings.getStyle().isEnabled("Дроп") ? dropClickGui : clickGui;
-        if (client.currentScreen != selected) client.setScreen(selected);
-    }
     private final Map<Function, Boolean> mouseBindStates = new HashMap<>();
 
     public static EventManager getInstance() {
@@ -69,11 +59,10 @@ public class EventManager {
         int action = event.getAction();
 
         if (key == GLFW.GLFW_KEY_RIGHT_SHIFT && action == GLFW.GLFW_PRESS) {
-            if (mc.currentScreen == clickGui || mc.currentScreen == dropClickGui) {
+            if (mc.currentScreen == clickGui) {
                 mc.currentScreen.close();
             } else {
-                ClickGuiSettings settings = FunctionManager.getFunction(ClickGuiSettings.class);
-                mc.setScreen(settings != null && settings.getStyle().isEnabled("Дроп") ? dropClickGui : clickGui);
+                mc.setScreen(clickGui);
             }
             return;
         }

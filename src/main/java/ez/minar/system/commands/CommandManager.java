@@ -26,6 +26,7 @@ public final class CommandManager {
                 || InventoryCleanerCommand.executeIfCommand(input)
                 || WayCommand.executeIfCommand(input)
                 || NeuroCommand.executeIfCommand(input)
+                || FakePlayerCommand.executeIfCommand(input)
                 || CalcCommand.executeIfCommand(input)
                 || AutoBuyCommand.executeIfCommand(input)
                 || executeParse(input);
@@ -38,7 +39,7 @@ public final class CommandManager {
 
         String commandLine = input.stripLeading().toLowerCase(Locale.ROOT);
         if (".".equals(commandLine)) {
-            return Stream.of(".friend", ".cfg", ".bind", ".blockesp", ".ic", ".way", ".neuro", ".calc", ".autobuy", ".ab", ".parse", ".unhook").sorted().toList();
+            return Stream.of(".friend", ".cfg", ".bind", ".blockesp", ".ic", ".way", ".neuro", ".calc", ".autobuy", ".ab", ".fk", ".parse", ".unhook").sorted().toList();
         }
 
         if (commandLine.startsWith(".p") && ".parse".startsWith(commandLine)) {
@@ -54,6 +55,7 @@ public final class CommandManager {
                         InventoryCleanerCommand.suggestionsFor(input).stream(),
                         WayCommand.suggestionsFor(input).stream(),
                         NeuroCommand.suggestionsFor(input).stream(),
+                        FakePlayerCommand.suggestionsFor(input).stream(),
                         CalcCommand.suggestionsFor(input).stream(),
                         AutoBuyCommand.suggestionsFor(input).stream()
                 )
@@ -80,7 +82,7 @@ public final class CommandManager {
         String suggestion = suggestions.getFirst();
         if (".friend".equals(suggestion) || ".cfg".equals(suggestion)
                 || ".bind".equals(suggestion) || ".blockesp".equals(suggestion) || ".ic".equals(suggestion)
-                || ".way".equals(suggestion) || ".neuro".equals(suggestion) || ".calc".equals(suggestion)
+                || ".way".equals(suggestion) || ".neuro".equals(suggestion) || ".calc".equals(suggestion) || ".fk".equals(suggestion)
                 || ".unhook".equals(suggestion)) {
             return suggestion + " ";
         }

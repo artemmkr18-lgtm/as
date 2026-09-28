@@ -9,8 +9,8 @@ layout(std140) uniform Uniforms {
     vec4 uMotion;       // x = camShiftX, y = camShiftY, z = slash, w = reserved
 };
 
-uniform sampler2D Sampler0; // Hand Mask
-uniform sampler2D Sampler1; // Depth / Screen
+uniform sampler2D Sampler0; // Свежая маска рук (жёсткая, привязана к рукам)
+uniform sampler2D Sampler1; // Режим 2 — копия сцены; остальные режимы — накопленный шлейф
 
 in vec2 vUV;
 out vec4 fragColor;
@@ -59,6 +59,11 @@ float ridged(vec2 p) {
 
 float sampleMask(vec2 uv) {
     return texture(Sampler0, clamp(uv, vec2(0.0), vec2(1.0))).r;
+}
+
+// Накопленный шлейф: прошлые позиции рук с затуханием. Живёт только в Sampler1.
+float sampleTrail(vec2 uv) {
+    return texture(Sampler1, clamp(uv, vec2(0.0), vec2(1.0))).r;
 }
 
 float edgeMask(vec2 uv, vec2 texel) {
@@ -145,14 +150,14 @@ void main() {
             float below = uv.y + d * height + camShift.y * d;
             vec2 samplePos = vec2(uv.x - wave1 - wave2 - wave3 + windForce * 0.03 * d + gust * 0.04 * d + camShift.x * d, below);
 
-            float m = sampleMask(samplePos);
+            float m = sampleTrail(samplePos);
             float falloff = 1.0 - d;
             plume += m * falloff * falloff;
         }
-        plume = clamp(plume * 0.45, 0.0, 1.0);
+        plume = clamp(plume * 0.4, 0.0, 1.0);
 
-        float blurred = sampleBlurredMask(uv, texel, 3.5);
-        float flame = clamp(plume * 1.6 + blurred * 0.4 + mask * 0.3, 0.0, 1.0) * energy * intensity;
+        float blurred = sampleBlurredMask(uv, texel, 1.5);
+        float flame = clamp(plume * 1.15 + blurred * 0.25 + mask * 0.3, 0.0, 1.0) * energy * intensity;
 
         vec3 colorHot = uColor.rgb;
         vec3 colorCold = uColor2.rgb;
@@ -168,15 +173,16 @@ void main() {
 
     // MODE 1: "Дым" (Smoke / Swirling Trail)
     if (mode == 1) {
-        float blurred = sampleBlurredMask(uv, texel, 4.0 + smoke * 4.0);
-        float blurredWide = sampleBlurredMask(uv, texel, 8.0 + smoke * 8.0);
+        float blurred = sampleBlurredMask(uv, texel, 1.5 + smoke * 1.5);
+        float blurredWide = sampleBlurredMask(uv, texel, 3.0 + smoke * 3.0);
+        float trailSmoke = sampleTrail(uv + vec2(0.0, 0.01));
 
         vec2 smokeDrift = vec2(sin(t * 0.7) * 0.04, -t * 0.15);
         float smokeNoise = fbm(uv * 3.5 + smokeDrift);
         float smokeTurbulence = ridged(uv * 5.0 - smokeDrift * 1.2);
 
-        float aura = clamp(max(blurred * 0.65, blurredWide * 0.45), 0.0, 1.0);
-        float smokeAlpha = clamp(aura * (0.85 + intensity * 0.5 + smoke * 0.4 + activity * 0.2 + slash * 0.4), 0.0, 0.9);
+        float aura = clamp(max(blurred * 0.55, blurredWide * 0.3) + trailSmoke * 0.25, 0.0, 1.0);
+        float smokeAlpha = clamp(aura * (0.5 + intensity * 0.35 + smoke * 0.25 + activity * 0.15 + slash * 0.3), 0.0, 0.7);
         smokeAlpha *= (0.6 + smokeNoise * 0.55 + smokeTurbulence * 0.35);
 
         vec3 smokeColor = uColor.rgb * (1.15 + smoke * 0.3);
@@ -212,7 +218,7 @@ void main() {
 
     // MODE 3: "Плазма" (Pulsing Energy Arcs)
     if (mode == 3) {
-        float blurred = sampleBlurredMask(uv, texel, 2.5);
+        float blurred = sampleBlurredMask(uv, texel, 1.2);
         vec2 p = (uv - 0.5) * 3.0;
         float d = length(p);
         float a = atan(p.y, p.x);
@@ -220,8 +226,8 @@ void main() {
         float arcs = abs(sin(6.0 * a + t * 4.0 + sin(d * 8.0 - t * 3.0)));
         arcs = pow(1.0 - clamp(arcs, 0.0, 1.0), 4.0);
 
-        float plasma = (mask * 0.4 + blurred * 0.6) * (0.4 + arcs * 0.8) * intensity;
-        vec3 plasmaCol = mix(uColor.rgb, uColor2.rgb, arcs) * (1.0 + arcs * glow);
+        float plasma = (mask * 0.55 + blurred * 0.3) * (0.4 + arcs * 0.8) * intensity;
+        vec3 plasmaCol = mix(uColor.rgb, uColor2.rgb, arcs) * (1.0 + arcs * glow * 0.6);
 
         float outAlpha = clamp(plasma * uColor.a, 0.0, 1.0);
         if (outAlpha <= 0.002) discard;

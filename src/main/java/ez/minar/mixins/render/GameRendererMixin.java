@@ -51,6 +51,14 @@ public abstract class GameRendererMixin {
     @Inject(method = "render", at = @At("RETURN"))
     private void render(RenderTickCounter tickCounter, boolean tick, CallbackInfo ci) {
         RotationManager.updateRender(tickCounter.getTickProgress(true));
+
+        // Пост-эффект HandShader рисуется один раз на кадр: маска рук к этому
+        // моменту уже собрана в renderHand, а сам проход фуллскрин.
+        HandShader handShader = FunctionManager.getFunction(HandShader.class);
+        if (handShader != null && handShader.isEnabled()) {
+            handShader.drawPostEffect();
+        }
+
         EventBus.post(new Render2DEvent(tickCounter));
     }
 
@@ -78,7 +86,6 @@ public abstract class GameRendererMixin {
             } finally {
                 minar$capturingHandShader = false;
             }
-            handShader.drawPostEffect();
         }
     }
 

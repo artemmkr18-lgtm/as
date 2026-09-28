@@ -418,7 +418,7 @@
   "Detects bots via armor and inventory patterns": "Detects bots via armor and inventory patterns",
   "Wykrywa boty na podstawie pancerza i ekwipunku": "Detects bots via armor and inventory patterns",
   "module.attackaura.name": "AttackAura",
-  "AttackAura": "AttackAura",
+  "AttackAura": "Aura",
   "module.attackaura.desc": "Attacks players and mobs in a specified radius",
   "Атакует игроков и мобов в заданном радиусе": "Attacks players and mobs in a specified radius",
   "Attacks players and mobs in a specified radius": "Attacks players and mobs in a specified radius",
@@ -856,10 +856,10 @@
   "Stożkowy kapelusz na głowie gracza": "Asian conical hat cosmetic on player head",
   "module.clickguisettings.name": "ClickGUI",
   "ClickGUI": "ClickGUI",
-  "module.clickguisettings.desc": "Interface style: Default / Drop",
-  "Стиль интерфейса: Дефолт / Дроп": "Interface style: Default / Drop",
-  "Interface style: Default / Drop": "Interface style: Default / Drop",
-  "Styl interfejsu: Domyślny / Drop": "Interface style: Default / Drop",
+  "module.clickguisettings.desc": "Interface color and scale",
+  "Стиль интерфейса: Дефолт / Дроп": "Interface color and scale",
+  "Interface style: Default / Drop": "Interface color and scale",
+  "Styl interfejsu: Domyślny / Drop": "Interface color and scale",
   "module.crosshair.name": "Crosshair",
   "Crosshair": "Crosshair",
   "module.crosshair.desc": "Customizable crosshair",
@@ -1562,5 +1562,6 @@
   "Эффекты": "Effects",
   "Юзать феерверк": "Use Firework",
   "Юзер": "User",
-  "Яркость": "Brightness"
+  "Яркость": "Brightness",
+  "Цвет и масштаб интерфейса": "Interface color and scale"
 }

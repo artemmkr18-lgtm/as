@@ -81,13 +81,39 @@ public final class DotCommandSuggestions {
                 .then(literal("list"))
                 .then(literal("clear")));
         DISPATCHER.register(literal(".neuro")
-                .then(literal("record")
-                        .then(argument("name", StringArgumentType.word())))
+                .then(literal("status"))
+                .then(literal("list"))
+                .then(literal("load")
+                        .then(argument("name", StringArgumentType.word())
+                                .suggests((context, builder) ->
+                                        CommandSource.suggestMatching(ez.minar.system.neuro.NeuroModel.listModels(), builder))))
                 .then(literal("play")
                         .then(argument("name", StringArgumentType.word())
                                 .suggests((context, builder) ->
-                                        CommandSource.suggestMatching(NeuroManager.getNames(), builder))))
-                .then(literal("stop")));
+                                        CommandSource.suggestMatching(ez.minar.system.neuro.NeuroModel.listModels(), builder))))
+                .then(literal("record")
+                        .then(argument("name", StringArgumentType.word())))
+                .then(literal("stop"))
+                .then(literal("train")
+                        .then(argument("name", StringArgumentType.word())
+                                .suggests((context, builder) ->
+                                        CommandSource.suggestMatching(ez.minar.system.neuro.NeuroModel.listDatasets(), builder))
+                                .then(argument("epochs", StringArgumentType.word())
+                                        .suggests((context, builder) ->
+                                                CommandSource.suggestMatching(List.of("200", "400", "800"), builder)))))
+                .then(literal("dir"))
+                .then(literal("data"))
+                .then(literal("cancel"))
+                .then(literal("why")));
+                DISPATCHER.register(literal(".fk")
+                .then(literal("add")
+                        .then(argument("name", StringArgumentType.word())))
+                .then(literal("remove")
+                        .then(argument("name", StringArgumentType.word())
+                                .suggests((context, builder) ->
+                                        CommandSource.suggestMatching(ez.minar.system.dummy.FakePlayerManager.getNames(), builder))))
+                .then(literal("clear"))
+                .then(literal("list")));
         DISPATCHER.register(literal(".calc"));
     }
 

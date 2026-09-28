@@ -142,22 +142,69 @@ public final class MinarClientCommands {
                             NeuroCommand.executeIfCommand(".neuro");
                             return Command.SINGLE_SUCCESS;
                         })
-                        .then(literal("record")
+                        .then(literal("status").executes(context -> {
+                            NeuroCommand.executeIfCommand(".neuro status");
+                            return Command.SINGLE_SUCCESS;
+                        }))
+                        .then(literal("list").executes(context -> {
+                            NeuroCommand.executeIfCommand(".neuro list");
+                            return Command.SINGLE_SUCCESS;
+                        }))
+                        .then(literal("load")
                                 .then(argument("name", StringArgumentType.word())
+                                        .suggests((context, builder) ->
+                                                CommandSource.suggestMatching(ez.minar.system.neuro.NeuroModel.listModels(), builder))
                                         .executes(context -> {
-                                            NeuroManager.startRecording(StringArgumentType.getString(context, "name"));
+                                            NeuroCommand.executeIfCommand(".neuro load " + StringArgumentType.getString(context, "name"));
                                             return Command.SINGLE_SUCCESS;
                                         })))
                         .then(literal("play")
                                 .then(argument("name", StringArgumentType.word())
                                         .suggests((context, builder) ->
-                                                CommandSource.suggestMatching(NeuroManager.getNames(), builder))
+                                                CommandSource.suggestMatching(ez.minar.system.neuro.NeuroModel.listModels(), builder))
                                         .executes(context -> {
-                                            NeuroManager.play(StringArgumentType.getString(context, "name"));
+                                            NeuroCommand.executeIfCommand(".neuro play " + StringArgumentType.getString(context, "name"));
+                                            return Command.SINGLE_SUCCESS;
+                                        })))
+                        .then(literal("record")
+                                .then(argument("name", StringArgumentType.word())
+                                        .executes(context -> {
+                                            NeuroCommand.executeIfCommand(".neuro record " + StringArgumentType.getString(context, "name"));
                                             return Command.SINGLE_SUCCESS;
                                         })))
                         .then(literal("stop").executes(context -> {
-                            NeuroManager.stopRecording();
+                            NeuroCommand.executeIfCommand(".neuro stop");
+                            return Command.SINGLE_SUCCESS;
+                        }))
+                        .then(literal("train")
+                                .then(argument("name", StringArgumentType.word())
+                                        .suggests((context, builder) ->
+                                                CommandSource.suggestMatching(ez.minar.system.neuro.NeuroModel.listDatasets(), builder))
+                                        .then(argument("epochs", StringArgumentType.word())
+                                                .suggests((context, builder) ->
+                                                        CommandSource.suggestMatching(java.util.List.of("200", "400", "800"), builder))
+                                                .executes(context -> {
+                                                    NeuroCommand.executeIfCommand(".neuro train " + StringArgumentType.getString(context, "name") + " " + StringArgumentType.getString(context, "epochs"));
+                                                    return Command.SINGLE_SUCCESS;
+                                                }))
+                                        .executes(context -> {
+                                            NeuroCommand.executeIfCommand(".neuro train " + StringArgumentType.getString(context, "name"));
+                                            return Command.SINGLE_SUCCESS;
+                                        })))
+                        .then(literal("dir").executes(context -> {
+                            NeuroCommand.executeIfCommand(".neuro dir");
+                            return Command.SINGLE_SUCCESS;
+                        }))
+                        .then(literal("data").executes(context -> {
+                            NeuroCommand.executeIfCommand(".neuro data");
+                            return Command.SINGLE_SUCCESS;
+                        }))
+                        .then(literal("cancel").executes(context -> {
+                            NeuroCommand.executeIfCommand(".neuro cancel");
+                            return Command.SINGLE_SUCCESS;
+                        }))
+                        .then(literal("why").executes(context -> {
+                            NeuroCommand.executeIfCommand(".neuro why");
                             return Command.SINGLE_SUCCESS;
                         }))
         ));

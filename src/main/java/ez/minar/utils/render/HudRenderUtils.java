@@ -1,6 +1,5 @@
 package ez.minar.utils.render;
 
-import ez.minar.system.features.render.HUD;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.item.Item;
@@ -25,17 +24,10 @@ public final class HudRenderUtils {
 
         float x;
         float y;
-        if (HUD.Instance != null && HUD.Instance.isEnabled() && HUD.Instance.hotbar.isEnabled()) {
-            float startX = (float) screenWidth / 2.0f - 100.0f;
-            float startY = (float) screenHeight - 29.0f;
-            x = startX + 6.0f + (float) slot * 21.5f;
-            y = startY + 5.5f;
-        } else {
-            int startX = screenWidth / 2 - 91;
-            float startY = (float) (screenHeight - 22);
-            x = startX + slot * 20 + 3;
-            y = startY + 3.0f;
-        }
+        int startX = screenWidth / 2 - 91;
+        float startY = (float) (screenHeight - 22);
+        x = startX + slot * 20 + 3;
+        y = startY + 3.0f;
 
         RenderUtil.rect(x, y, 18.0f, 18.0f, 4.0f, 4.0f, 4.0f, 4.0f,
                 new Color(color.getRed(), color.getGreen(), color.getBlue(), Math.min(255, color.getAlpha())));

@@ -24,13 +24,15 @@ public class HandShader extends Function {
     private final ColorSetting customColor = new ColorSetting("Основной цвет", new Color(0x66, 0x33, 0xFF));
     private final ColorSetting customTipColor = new ColorSetting("Цвет пламени", new Color(0xFF, 0x55, 0x22));
 
-    private final NumberSetting intensity = new NumberSetting("Интенсивность", 1.0, 0.1, 2.5, 0.05);
+    private final NumberSetting intensity = new NumberSetting("Интенсивность", 0.7, 0.1, 2.5, 0.05);
     private final NumberSetting speed = new NumberSetting("Скорость", 1.15, 0.2, 3.0, 0.05);
-    private final NumberSetting height = new NumberSetting("Высота пламени", 0.08, 0.01, 0.35, 0.01);
+    private final NumberSetting height = new NumberSetting("Высота пламени", 0.045, 0.01, 0.35, 0.005);
     private final NumberSetting wind = new NumberSetting("Ветер", 1.0, 0.0, 3.0, 0.1);
     private final NumberSetting wave = new NumberSetting("Волны", 1.0, 0.0, 3.0, 0.1);
     private final NumberSetting glow = new NumberSetting("Глоу", 2.0, 0.5, 5.0, 0.1);
     private final NumberSetting smoke = new NumberSetting("Плотность дыма", 0.55, 0.0, 1.0, 0.05);
+    private final NumberSetting trail = new NumberSetting("Длина шлейфа", 0.82, 0.0, 0.995, 0.005);
+    private final NumberSetting rise = new NumberSetting("Подъём шлейфа", 0.5, -4.0, 8.0, 0.1);
     private final NumberSetting alpha = new NumberSetting("Прозрачность", 0.95, 0.1, 1.0, 0.05);
     private final BooleanSetting hideHands = new BooleanSetting("Скрыть текстуру рук", false);
 
@@ -48,6 +50,8 @@ public class HandShader extends Function {
                 wave,
                 glow,
                 smoke,
+                trail,
+                rise,
                 alpha,
                 hideHands
         );
@@ -92,6 +96,8 @@ public class HandShader extends Function {
                 (float) wave.getValue(),
                 (float) glow.getValue(),
                 (float) smoke.getValue(),
+                (float) trail.getValue(),
+                (float) rise.getValue(),
                 new Color(main.getRed(), main.getGreen(), main.getBlue(), (int) (alpha.getValue() * 255)),
                 tip
         );

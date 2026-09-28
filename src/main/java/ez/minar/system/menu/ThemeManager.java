@@ -12,7 +12,7 @@ import java.util.List;
 import java.util.Properties;
 
 public class ThemeManager {
-    public static final Color DEFAULT_ACCENT = new Color(255, 175, 226);
+    public static final Color DEFAULT_ACCENT = new Color(10, 245, 175);
     public static final int MAX_NAME_LENGTH = 24;
     public static final int MAX_NAMED_THEMES = 128;
     private static final int MAX_CUSTOM_THEMES = 128;

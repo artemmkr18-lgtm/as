@@ -4,6 +4,7 @@ import ez.minar.system.menu.GuiTheme;
 import ez.minar.system.settings.impl.ColorSetting;
 import ez.minar.utils.math.Easings;
 import ez.minar.utils.render.RenderUtil;
+import ez.minar.utils.render.RockstarColors;
 import ez.minar.utils.render.msdf.Msdf;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
@@ -186,12 +187,12 @@ public class ColorPickerWindow {
         // 1. Shadow
         RenderUtil.shadow(x, renderY + 2f, WINDOW_WIDTH, WINDOW_HEIGHT, RADIUS, 12f, 0.35f * opacity, 2f, new Color(0, 0, 0, 190));
 
-        // Flat, opaque at rest; no blur or glass behind the color controls.
-        RenderUtil.rect(x, renderY, WINDOW_WIDTH, WINDOW_HEIGHT, RADIUS, withOpacity(new Color(28, 28, 28), opacity));
+        // Flat, opaque at rest with Rockstar dark surface
+        RenderUtil.rect(x, renderY, WINDOW_WIDTH, WINDOW_HEIGHT, RADIUS, withOpacity(RockstarColors.SURFACE, opacity));
         RenderUtil.rect(x + 5f, renderY + 4f, WINDOW_WIDTH - 10f, HEADER_HEIGHT - 5f, 6f,
-                withOpacity(new Color(23, 23, 23), opacity));
+                withOpacity(RockstarColors.SURFACE_HOVER, opacity));
         RenderUtil.outline(x, renderY, WINDOW_WIDTH, WINDOW_HEIGHT, RADIUS, 0.85f,
-                withOpacity(new Color(255, 255, 255, 14), opacity));
+                withOpacity(RockstarColors.DIVIDER, opacity));
 
         // Header text remains stable during closing.
         RenderUtil.text(context, Msdf.SF_BOLD, x + PADDING, renderY + 6.5f, ez.minar.system.managers.LocalizationManager.get(title), 9.5f, withOpacity(Color.WHITE, opacity));

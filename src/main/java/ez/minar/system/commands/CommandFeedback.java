@@ -22,6 +22,11 @@ public final class CommandFeedback {
             return;
         }
 
+        if (!client.isOnThread()) {
+            client.execute(() -> message(message, color));
+            return;
+        }
+
         client.inGameHud.getChatHud().addMessage(
                 Text.literal("[")
                         .formatted(Formatting.DARK_GRAY)

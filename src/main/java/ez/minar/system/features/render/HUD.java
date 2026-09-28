@@ -34,7 +34,6 @@ import ez.minar.utils.render.msdf.MsdfFont;
 import ez.minar.utils.render.msdf.MsdfManager;
 import ez.minar.utils.render.pipeline.TexturePipeline;
 import ez.minar.utils.render.scissor.Scissor;
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gl.RenderPipelines;
 import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.PlayerSkinDrawer;
@@ -43,7 +42,6 @@ import net.minecraft.client.gui.hud.InGameHud;
 import net.minecraft.client.gui.screen.ChatScreen;
 import net.minecraft.client.network.AbstractClientPlayerEntity;
 import net.minecraft.client.network.PlayerListEntry;
-import net.minecraft.client.render.RenderTickCounter;
 import net.minecraft.client.util.DefaultSkinHelper;
 import net.minecraft.entity.EquipmentSlot;
 import net.minecraft.entity.boss.BossBar;
@@ -155,7 +153,6 @@ public class HUD extends Function {
     private static final Identifier ICON_KEYBOARD = Identifier.of("minar", "icons/hud16/keyboard.png");
     private static final Identifier ICON_POTION = Identifier.of("minar", "icons/hud16/potion.png");
     private static final Identifier ICON_TARGET = Identifier.of("minar", "icons/hud16/target.png");
-    private static final Identifier ICON_HOTBAR = Identifier.of("minar", "icons/hud16/hotbar.png");
     private static final Identifier ICON_ARMOR = Identifier.of("minar", "icons/hud16/armor.png");
     private static final Identifier ICON_DRAG = Identifier.of("minar", "icons/hud16/drag.png");
     private static final Identifier ICON_WHO_GLASS = Identifier.of("minar", "icons/hud/whoglass.png");
@@ -170,8 +167,7 @@ public class HUD extends Function {
 
     // --- Settings ---
     public final MultiListSetting elements = new MultiListSetting("Элементы",
-            "Мир", "Игрок", "Бинды", "Зелья", "ТаргетХуд", "Хотбар", "Тотем", "Персонал", "Броня", "Остров", "Уведомления");
-    public final BooleanSetting hotbar = new BooleanSetting("Хотбар", true);
+            "Мир", "Игрок", "Бинды", "Зелья", "ТаргетХуд", "Тотем", "Персонал", "Броня", "Остров", "Уведомления");
     public final BooleanSetting worldCompact = new BooleanSetting("Компактный сервер", false);
     public final BooleanSetting speedY = new BooleanSetting("Скорость по Y", false);
     public final BooleanSetting targetHudLook = new BooleanSetting("Таргет по взгляду", true);
@@ -210,6 +206,8 @@ public class HUD extends Function {
     private final HudMotion potionsMotion = new HudMotion();
     private final HudMotion staffMotion = new HudMotion();
     private final HudMotion armorMotion = new HudMotion();
+    /** Armor card width follows the number of equipped pieces so the panel stretches to fit them. */
+    private final AnimatedValue armorWidth = new AnimatedValue(320L, 0f, AnimatedValue.CARD);
     private final HudMotion totemMotion = new HudMotion();
     private final HudMotion islandMotion = new HudMotion();
     /** Transport row revealed by right-clicking the island. */
@@ -234,7 +232,6 @@ public class HUD extends Function {
             new AnimatedValue(180L, 0f, AnimatedValue.CARD),
             new AnimatedValue(180L, 0f, AnimatedValue.CARD),
             new AnimatedValue(180L, 0f, AnimatedValue.CARD)};
-    private final HudMotion noticesMotion = new HudMotion();
     /** Row key for the placeholder pills the editor shows over an empty card. */
     private static final String PREVIEW_ROW = "\u0000preview";
     /** Row payloads outliving their source list, so a row can fade out with its text intact. */
@@ -251,10 +248,6 @@ public class HUD extends Function {
     private final AnimatedValue targetHudHealthAnim = new AnimatedValue(260L, 1.0f, AnimatedValue.DRAG);
     private final AnimatedValue targetHudAbsorbAnim = new AnimatedValue(260L, 0.0f, AnimatedValue.DRAG);
 
-    // --- Hotbar Animations ---
-    private final float[] hotbarSlotLifts = new float[9];
-    private static float hotbarCurrentY = -1.0f;
-
     // --- Notifications ---
     public enum NoticeType {
         SUCCESS, ERROR, WARN, INFO
@@ -265,10 +258,6 @@ public class HUD extends Function {
         public final NoticeType type;
         public final long created;
         public final long duration;
-        /** Ease of this notice's own slide-in / fade-out, replacing the old per-frame step. */
-        final AnimatedValue motion = new AnimatedValue(500L, 0f, AnimatedValue.CARD);
-        /** Stacks glide to their slot, so removing a notice does not snap the ones above it down. */
-        final AnimatedValue slot = new AnimatedValue(500L, -1f, AnimatedValue.DRAG);
 
         public NoticeItem(String text, NoticeType type, long duration) {
             this.text = text;
@@ -284,7 +273,7 @@ public class HUD extends Function {
 
     public HUD() {
         Instance = this;
-        addSettings(elements, hotbar, worldCompact, speedY, targetHudLook, targetHudArmor, islandText, colorMode, gradientColor1, gradientColor2, gradientSpeed, gradientOffset);
+        addSettings(elements, worldCompact, speedY, targetHudLook, targetHudArmor, islandText, colorMode, gradientColor1, gradientColor2, gradientSpeed, gradientOffset);
         positions.put("Мир", dragWorld);
         positions.put("Игрок", dragPlayer);
         positions.put("Бинды", dragKeybinds);
@@ -974,102 +963,6 @@ public class HUD extends Function {
         return null;
     }
 
-    // --- Component 6: Custom Hotbar (individual rounded slots 22x22, 3px spacing) ---
-    public void renderHotbarXyeta(DrawContext context, RenderTickCounter tickCounter, HotbarItemRenderer itemRenderer) {
-        if (mc.player == null) return;
-
-        int screenW = mc.getWindow().getScaledWidth();
-        int screenH = mc.getWindow().getScaledHeight();
-
-        ItemStack offhand = mc.player.getOffHandStack();
-        boolean hasOffhand = !offhand.isEmpty();
-
-        float slotSize = 22.0f;
-        float gap = 3.0f;
-        float totalW = 9 * slotSize + 8 * gap; // 222px
-
-        float startX = (screenW - totalW) / 2.0f;
-        float baseY = screenH - 26.0f;
-        hotbarCurrentY = baseY;
-
-        // Render hearts / food cleanly above hotbar if enabled
-        renderHotbarStatusBars(context, startX, baseY);
-
-        int selectedSlot = mc.player.getInventory().getSelectedSlot();
-
-        // Hotbar backdrop blur once for all slots
-        RenderUtil.blur(startX - 2f, baseY - 4f, totalW + 4f, slotSize + 8f, 7.0f, 5.0f);
-
-        // Render 9 slots (matching ksnip_20260923-183252.png)
-        for (int i = 0; i < 9; ++i) {
-            boolean isSel = (i == selectedSlot);
-            float targetLift = isSel ? 1.0f : 0.0f;
-            hotbarSlotLifts[i] += (targetLift - hotbarSlotLifts[i]) * 0.25f;
-
-            float lift = hotbarSlotLifts[i];
-            float slotX = startX + i * (slotSize + gap);
-            float slotY = baseY - 3.0f * lift;
-
-            // Slot background
-            RenderUtil.rect(slotX, slotY, slotSize, slotSize, 6.0f, COLOR_CARD_BG);
-
-            // Slot outline
-            if (isSel) {
-                RenderUtil.outline(slotX, slotY, slotSize, slotSize, 6.0f, 1.0f, getAccentColor());
-            } else {
-                RenderUtil.outline(slotX, slotY, slotSize, slotSize, 6.0f, 0.5f, COLOR_BORDER);
-            }
-
-            ItemStack stack = mc.player.getInventory().getStack(i);
-            if (!stack.isEmpty()) {
-                context.getMatrices().pushMatrix();
-                if (lift > 0.01f) {
-                    float sc = 1.0f + 0.1f * lift;
-                    context.getMatrices().translate(slotX + slotSize / 2f, slotY + slotSize / 2f);
-                    context.getMatrices().scale(sc, sc);
-                    context.getMatrices().translate(-(slotX + slotSize / 2f), -(slotY + slotSize / 2f));
-                }
-                itemRenderer.render((int) (slotX + 3f), (int) (slotY + 3f), tickCounter, mc.player, stack, i);
-                context.getMatrices().popMatrix();
-            }
-        }
-
-        // Render Offhand slot
-        if (hasOffhand) {
-            float offhandX = startX - slotSize - 6.0f;
-            float offhandY = baseY;
-
-            RenderUtil.blur(offhandX, offhandY, slotSize, slotSize, 6.0f, 5.0f);
-            RenderUtil.rect(offhandX, offhandY, slotSize, slotSize, 6.0f, COLOR_CARD_BG);
-            RenderUtil.outline(offhandX, offhandY, slotSize, slotSize, 6.0f, 0.5f, COLOR_BORDER);
-
-            itemRenderer.render((int) (offhandX + 3f), (int) (offhandY + 3f), tickCounter, mc.player, offhand, 99);
-        }
-    }
-
-    private void renderHotbarStatusBars(DrawContext context, float hotbarX, float hotbarY) {
-        if (mc.player == null) return;
-
-        float hp = mc.player.getHealth();
-        int food = mc.player.getHungerManager().getFoodLevel();
-
-        float pillH = 14.0f;
-        float pillY = hotbarY - 17.0f;
-
-        // Left pill: Hearts / HP
-        String hpText = String.format(Locale.ROOT, "%.1f HP", hp);
-        float hpW = getTextWidth(hpText) + 10.0f;
-        drawPill(hotbarX, pillY, hpW, pillH, 4.0f);
-        drawText(context, hpText, hotbarX + 5.0f, pillY + 3.0f, new Color(255, 90, 90));
-
-        // Right pill: Hunger
-        String foodText = food + " Food";
-        float foodW = getTextWidth(foodText) + 10.0f;
-        float foodX = hotbarX + 222.0f - foodW;
-        drawPill(foodX, pillY, foodW, pillH, 4.0f);
-        drawText(context, foodText, foodX + 5.0f, pillY + 3.0f, new Color(255, 175, 50));
-    }
-
     // --- Component 7: Totem Counter (hud.totem_counter 28x27) ---
     private void renderTotem(DrawContext context) {
         if (mc.player == null) return;
@@ -1230,22 +1123,33 @@ public class HUD extends Function {
         return y + (rowH + spacing) * alpha;
     }
 
-    // --- Component 9: Armor Status (96x30 rounded card, 4 slots) ---
+    // --- Component 9: Armor Status (rounded card, one slot per equipped piece) ---
     private void renderArmor(DrawContext context) {
         if (mc.player == null) return;
 
         EquipmentSlot[] slots = {EquipmentSlot.FEET, EquipmentSlot.LEGS, EquipmentSlot.CHEST, EquipmentSlot.HEAD};
-        boolean hasAny = false;
+        List<ItemStack> equipped = new ArrayList<>();
         for (EquipmentSlot sl : slots) {
-            if (!mc.player.getEquippedStack(sl).isEmpty()) {
-                hasAny = true;
-                break;
-            }
+            ItemStack st = mc.player.getEquippedStack(sl);
+            if (!st.isEmpty()) equipped.add(st);
         }
-        if (!hasAny && !(mc.currentScreen instanceof ChatScreen)) return;
-        boolean showing = elements.isEnabled("Броня") && hudVisible() && (hasAny || mc.currentScreen instanceof ChatScreen);
+        boolean editing = mc.currentScreen instanceof ChatScreen;
+        if (equipped.isEmpty() && !editing) return;
+        // Nothing on but in the editor: preview the full set so the element is grabbable and sized.
+        if (equipped.isEmpty()) {
+            equipped.add(new ItemStack(Items.NETHERITE_BOOTS));
+            equipped.add(new ItemStack(Items.NETHERITE_LEGGINGS));
+            equipped.add(new ItemStack(Items.NETHERITE_CHESTPLATE));
+            equipped.add(new ItemStack(Items.NETHERITE_HELMET));
+        }
+        int n = equipped.size();
+        boolean showing = elements.isEnabled("Броня") && hudVisible();
 
-        float w = 96.0f;
+        float pitch = 24.0f;
+        float margin = 4.0f;
+        float targetW = n * pitch + margin * 2f;
+        if (armorWidth.get() <= 0f) armorWidth.snap(targetW);
+        float w = armorWidth.to(targetW);
         float h = 30.0f;
 
         float[] pos = dragArmor.place(w, h);
@@ -1260,36 +1164,26 @@ public class HUD extends Function {
         drawCard(x, y, w, h, 8.0f, 7.0f * armorMotion.blur(), a);
         if (a <= 0.5f) return;
 
-        ItemStack[] shown = new ItemStack[4];
-        for (int i = 0; i < 4; i++) {
-            shown[i] = mc.player.getEquippedStack(slots[i]);
-            if (shown[i].isEmpty() && mc.currentScreen instanceof ChatScreen) {
-                shown[i] = switch (i) {
-                    case 0 -> new ItemStack(Items.NETHERITE_BOOTS);
-                    case 1 -> new ItemStack(Items.NETHERITE_LEGGINGS);
-                    case 2 -> new ItemStack(Items.NETHERITE_CHESTPLATE);
-                    default -> new ItemStack(Items.NETHERITE_HELMET);
-                };
-            }
-        }
-
+        // Clip to the card: a newly equipped piece slides in as the panel stretches to reach it,
+        // rather than popping at a slot the rounded card has not grown to yet.
+        Scissor.push(x, y, w, h);
         Matrix3x2fStack matrices = context.getMatrices();
         HudRenderUtils.scaleAround(matrices, cx, cy, s);
-        for (int i = 0; i < 4; i++) {
-            if (!shown[i].isEmpty()) context.drawItem(shown[i], (int) (x + i * 24.0f + 4f), (int) (y + 2f));
+        for (int i = 0; i < n; i++) {
+            context.drawItem(equipped.get(i), (int) (x + margin + i * pitch), (int) (y + 2f));
         }
         HudRenderUtils.popMatrix(matrices);
 
-        for (int i = 0; i < 4; i++) {
-            ItemStack stack = shown[i];
-            if (stack.isEmpty()) continue;
+        for (int i = 0; i < n; i++) {
+            ItemStack stack = equipped.get(i);
             int pct = stack.isDamageable()
                     ? Math.round((1.0f - (float) stack.getDamage() / stack.getMaxDamage()) * 100f)
                     : 100;
             String pctStr = pct + "%";
             float pctW = getTextWidth(pctStr);
-            drawText(context, pctStr, x + i * 24.0f + 12f - pctW / 2f, y + 19f, withAlpha(Color.WHITE, a));
+            drawText(context, pctStr, x + margin + i * pitch + 8f - pctW / 2f, y + 19f, withAlpha(Color.WHITE, a));
         }
+        Scissor.pop();
     }
 
     // --- Component 10: Dynamic Island (hud.dynamic_island) ---
@@ -1740,64 +1634,17 @@ public class HUD extends Function {
         return bars;
     }
 
-    // --- Component 11: Notifications ---
+    // --- Component 11: Notification source ---
+    /**
+     * Notices no longer draw their own bottom-right stack: the Dynamic Island is the only surface
+     * (see {@link #newestIslandNotice()}). This just expires and prunes the queue so the island's
+     * alert has fresh items to read and the list cannot grow without bound.
+     */
     private void renderNotices(DrawContext context) {
         if (NOTICES.isEmpty()) return;
-
-        int screenW = mc.getWindow().getScaledWidth();
-        int screenH = mc.getWindow().getScaledHeight();
-
-        // Notices are pinned to the screen instead of a HudDrag, so they must opt out of the scale
-        // the previously placed element left on the shared projection state.
-        RenderUtil.resetUiScale();
-
-        // Advanced even while the element is off, so queued notices still expire instead of
-        // freezing at whatever alpha the toggle caught them at.
-        noticesMotion.update(elements.isEnabled("Уведомления"), hudVisible(), false);
-        float groupAlpha = noticesMotion.alpha();
-
         long now = System.currentTimeMillis();
-        float slotY = screenH - 35.0f;
-
         for (NoticeItem item : NOTICES) {
-            long age = now - item.created;
-            boolean live = age <= item.duration;
-            float life = Math.clamp(item.motion.to(live ? 1f : 0f), 0f, 1f);
-            if (!live && life <= 0.01f) {
-                NOTICES.remove(item);
-                continue;
-            }
-            float a = life * groupAlpha;
-            if (a <= 0.004f) {
-                slotY -= 22.0f;
-                continue;
-            }
-
-            float textW = getTextWidth(item.text);
-            float w = textW + 24.0f;
-            float h = 18.0f;
-
-            if (item.slot.get() < 0f) item.slot.snap(slotY);
-            float y = item.slot.to(slotY);
-            float x = screenW - 10.0f - w + HudMotion.rowSlide(a);
-
-            drawCard(x, y, w, h, 5.0f, 5.0f * a, a);
-
-            Color iconCol = switch (item.type) {
-                case SUCCESS -> new Color(46, 204, 113);
-                case ERROR -> new Color(235, 35, 35);
-                case WARN -> new Color(245, 166, 35);
-                case INFO -> getAccentColor();
-            };
-
-            RenderUtil.rect(x + 4f, y + 4f, 10f, 10f, 2f, withAlpha(iconCol, a));
-            drawText(context, item.text, x + 18f, y + 5.0f, withAlpha(Color.WHITE, a));
-
-            // Progress bar
-            float prog = 1.0f - Math.clamp((float) age / item.duration, 0.0f, 1.0f);
-            RenderUtil.rect(x + 4f, y + h - 1.5f, (w - 8f) * prog, 1.0f, 0.5f, withAlpha(iconCol, a));
-
-            slotY -= 22.0f * life;
+            if (now - item.created > item.duration) NOTICES.remove(item);
         }
     }
 
@@ -1849,29 +1696,12 @@ public class HUD extends Function {
         RenderUtil.outline(x, y, width, height, radius, 0.75f, new Color(255, 255, 255, Math.min(50, Math.max(0, (int) (a * 0.2f)))));
     }
 
-    public static boolean shouldDisableDefaultHotbar() {
-        return Instance != null && Instance.isEnabled() && Instance.hotbar.isEnabled();
-    }
-
-    public static boolean shouldHideStatusBars() {
-        return Instance != null && Instance.isEnabled() && Instance.hotbar.isEnabled();
-    }
-
     public static boolean shouldDisableDefaultScoreboard() {
         return false;
     }
 
     public static boolean shouldHideDefaultStatusEffectIcons() {
         return Instance != null && Instance.isEnabled() && Instance.elements.isEnabled("Зелья");
-    }
-
-    public static float getHotbarShift() {
-        if (Instance == null || !Instance.isEnabled() || !Instance.hotbar.isEnabled() || hotbarCurrentY < 0.0f) {
-            return 0.0f;
-        }
-        int screenH = MinecraftClient.getInstance().getWindow().getScaledHeight();
-        float defY = screenH - 29.0f;
-        return Math.max(0.0f, defY - hotbarCurrentY);
     }
 
     private void drawSkinFace(DrawContext context, PlayerEntity player, float x, float y, float size, float radius,
@@ -1893,10 +1723,5 @@ public class HUD extends Function {
         }
         RenderUtil.outline(x, y, size, size, radius, 0.5f, COLOR_BORDER);
         HudRenderUtils.popMatrix(matrices);
-    }
-
-    @FunctionalInterface
-    public interface HotbarItemRenderer {
-        void render(int x, int y, RenderTickCounter tickCounter, PlayerEntity player, ItemStack stack, int seed);
     }
 }

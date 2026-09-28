@@ -11,3 +11,5 @@ run/
 
 out/
 target/
+*.pyc
+__pycache__/

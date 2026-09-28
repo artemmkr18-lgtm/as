@@ -1,28 +1,28 @@
 package ez.minar.system.menu.components.settings;
 
-import ez.minar.system.menu.GuiTheme;
 import ez.minar.system.menu.ThemeManager;
 import ez.minar.system.settings.Setting;
 import ez.minar.system.settings.impl.ModeSetting;
+import ez.minar.utils.anim.AnimatedFloat;
+import ez.minar.utils.anim.Motion;
 import ez.minar.utils.render.RenderUtil;
+import ez.minar.utils.render.RockstarColors;
 import ez.minar.utils.render.msdf.Msdf;
-import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.sound.PositionedSoundInstance;
-import net.minecraft.sound.SoundEvent;
-import net.minecraft.util.Identifier;
 
 import java.awt.Color;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class ModeSettingRenderer implements SettingRenderer<ModeSetting> {
-    private static final float HEADER_HEIGHT = 22f;
-    private static final float CHIP_HEIGHT = 22f;
-    private static final float CHIP_RADIUS = 6f;
-    private static final float CHIP_GAP_X = 6f;
-    private static final float CHIP_GAP_Y = 5f;
-    private static final float CHIP_PAD_H = 9f;
+    private static final float HEADER_HEIGHT = 20f;
+    private static final float CHIP_HEIGHT = 20f;
+    private static final float CHIP_RADIUS = 5f;
+    private static final float CHIP_GAP_X = 5f;
+    private static final float CHIP_GAP_Y = 4f;
+    private static final float CHIP_PAD_H = 8f;
 
     private static class ChipLayout {
         String mode;
@@ -34,6 +34,7 @@ public class ModeSettingRenderer implements SettingRenderer<ModeSetting> {
     }
 
     private float lastWidth = 170f;
+    private final Map<String, AnimatedFloat> chipAnims = new HashMap<>();
 
     @Override
     public boolean supports(Setting setting) {
@@ -79,13 +80,14 @@ public class ModeSettingRenderer implements SettingRenderer<ModeSetting> {
     @Override
     public void render(DrawContext context, ModeSetting setting, SettingRendererContext rendererContext, float x, float y, float width, float scale, float opacity) {
         this.lastWidth = width;
-        float textSize = 10.5f * scale;
-        float chipTextSize = 9.5f * scale;
+        float textSize = 10f * scale;
+        float chipTextSize = 9f * scale;
 
         // Header: Setting name
         String name = setting.getDisplayName();
-        RenderUtil.text(context, x, y + 1.5f * scale, name, textSize, rendererContext.withOpacity(GuiTheme.TEXT_SETTING_LABEL, opacity));
+        RenderUtil.text(context, x, y + 1f * scale, name, textSize, rendererContext.withOpacity(RockstarColors.TEXT_SECONDARY, opacity));
 
+        Color accent = ThemeManager.getThemeColor();
         List<ChipLayout> chips = computeLayout(setting, width, scale);
         for (ChipLayout chip : chips) {
             float cx = x + chip.relX;
@@ -93,41 +95,31 @@ public class ModeSettingRenderer implements SettingRenderer<ModeSetting> {
             boolean isSelected = setting.isEnabled(chip.mode);
             boolean hovered = rendererContext.isHovered(cx, cy, chip.width, chip.height);
 
-            if (isSelected) {
-                // Selected chip with subtle glass effect
-                RenderUtil.shadow(cx, cy + 0.5f * scale, chip.width, chip.height, CHIP_RADIUS * scale, 2.5f * scale, 0.14f * opacity, 0.6f * scale, new Color(0, 0, 0, 110));
-                Color bg = rendererContext.withOpacity(GuiTheme.CHIP_SELECTED_BG, opacity);
-                RenderUtil.rect(cx, cy, chip.width, chip.height, CHIP_RADIUS * scale, bg);
+            String animKey = setting.getName() + ":" + chip.mode;
+            AnimatedFloat anim = chipAnims.computeIfAbsent(animKey, k -> new AnimatedFloat(isSelected ? 1f : 0f, Motion.ROW));
+            anim.setTarget(isSelected ? 1f : 0f);
+            float progress = Math.clamp(anim.getValue(), 0f, 1f);
 
-                float chipGlassAlpha = 0.36f * opacity;
-                Color chipGlassTint = rendererContext.withOpacity(ThemeManager.getThemeColor(), 0.32f * opacity);
-                RenderUtil.fluidGlass(cx, cy, chip.width, chip.height, CHIP_RADIUS * scale, 0.40f, chipGlassAlpha, chipGlassTint);
+            // Interpolate colors between idle dark surface and accent
+            Color idleBg = hovered ? new Color(38, 33, 46, 180) : new Color(28, 25, 34, 160);
+            Color chipBg = RockstarColors.lerp(idleBg, accent, progress);
 
-                RenderUtil.outline(cx, cy, chip.width, chip.height, CHIP_RADIUS * scale, 0.75f * scale,
-                        rendererContext.withOpacity(GuiTheme.ACCENT_BRIGHT, opacity * 0.9f));
+            RenderUtil.shadow(cx, cy + 0.5f * scale, chip.width, chip.height, CHIP_RADIUS * scale, 2.5f * scale, (0.10f + 0.10f * progress) * opacity, 0.6f * scale, new Color(0, 0, 0, 110));
+            RenderUtil.rect(cx, cy, chip.width, chip.height, CHIP_RADIUS * scale, rendererContext.withOpacity(chipBg, opacity));
 
-                RenderUtil.text(context, cx + CHIP_PAD_H * scale, cy + (chip.height - Msdf.height(chipTextSize)) / 2f + 0.5f * scale,
-                        chip.displayMode, chipTextSize, rendererContext.withOpacity(GuiTheme.CHIP_SELECTED_TEXT, opacity));
-            } else {
-                // Subtle dark background with muted text
-                if (hovered) {
-                    RenderUtil.shadow(cx, cy + 0.5f * scale, chip.width, chip.height, CHIP_RADIUS * scale, 2f * scale, 0.10f * opacity, 0.5f * scale, new Color(0, 0, 0, 90));
-                }
-                Color bg = hovered ? GuiTheme.CHIP_HOVER_BG : GuiTheme.CHIP_IDLE_BG;
-                RenderUtil.rect(cx, cy, chip.width, chip.height, CHIP_RADIUS * scale, rendererContext.withOpacity(bg, opacity));
+            // Fluid glass reflection
+            float glassAlpha = (0.15f + 0.25f * progress) * opacity;
+            Color glassTint = RockstarColors.lerp(Color.WHITE, accent, progress);
+            RenderUtil.fluidGlass(cx, cy, chip.width, chip.height, CHIP_RADIUS * scale, 0.35f, glassAlpha, rendererContext.withOpacity(glassTint, 0.25f * opacity));
 
-                if (hovered) {
-                    float chipGlassAlpha = 0.18f * opacity;
-                    Color chipGlassTint = rendererContext.withOpacity(Color.WHITE, 0.12f * opacity);
-                    RenderUtil.fluidGlass(cx, cy, chip.width, chip.height, CHIP_RADIUS * scale, 0.35f, chipGlassAlpha, chipGlassTint);
-                    RenderUtil.outline(cx, cy, chip.width, chip.height, CHIP_RADIUS * scale, 0.7f * scale,
-                            rendererContext.withOpacity(new Color(255, 255, 255, 40), opacity));
-                }
+            // Outline
+            Color outlineCol = RockstarColors.lerp(new Color(255, 255, 255, hovered ? 45 : 20), accent, progress);
+            RenderUtil.outline(cx, cy, chip.width, chip.height, CHIP_RADIUS * scale, 0.65f * scale, rendererContext.withOpacity(outlineCol, opacity));
 
-                Color textCol = hovered ? GuiTheme.CHIP_HOVER_TEXT : GuiTheme.CHIP_IDLE_TEXT;
-                RenderUtil.text(context, cx + CHIP_PAD_H * scale, cy + (chip.height - Msdf.height(chipTextSize)) / 2f + 0.5f * scale,
-                        chip.displayMode, chipTextSize, rendererContext.withOpacity(textCol, opacity));
-            }
+            // Text
+            Color textCol = RockstarColors.lerp(hovered ? Color.WHITE : RockstarColors.TEXT_MUTED, Color.WHITE, progress);
+            RenderUtil.text(context, cx + CHIP_PAD_H * scale, cy + (chip.height - Msdf.height(chipTextSize)) / 2f,
+                    chip.displayMode, chipTextSize, rendererContext.withOpacity(textCol, opacity));
         }
     }
 

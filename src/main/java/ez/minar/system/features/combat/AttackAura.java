@@ -38,7 +38,7 @@ import net.minecraft.world.RaycastContext;
 import java.awt.Color;
 import java.util.Random;
 
-@NewFunction(name = "AttackAura", desc = "Атакует игроков и мобов в заданном радиусе", category = Category.COMBAT)
+@NewFunction(name = "AttackAura", desc = "Бьёт женщин и детей", category = Category.COMBAT)
 public class AttackAura extends Function {
     private static final float ATTACK_COOLDOWN_TICK_DELTA = 0.5F;
     private static final float ATTACK_COOLDOWN_THRESHOLD = 0.9F;
@@ -51,53 +51,42 @@ public class AttackAura extends Function {
     private static final long RW_FLICK_DURATION_MS = 200L;
     private static final int FAST_SPRINT_DROP_TICKS = 3;
 
-    private final NumberSetting range = new NumberSetting("Радиус", 3.0, 1.0, 6.0, 0.1);
-    private final NumberSetting aimRange = new NumberSetting("Радиус наводки", 3.0, 1.0, 6.0, 0.1);
-    private final ListSetting rotationMode = new ListSetting(
-            "Ротация",
-            "Grim",
-            "ReallyWorld",
-            "Matrix",
-            "HvH",
-            "Legit",
-            "Neuro",
-            "Custom"
-    );
+    // 14 alternating settings matching the reference photo 1:1
+    private final ListSetting rotationMode = new ListSetting("Ротация", "Нет", "Простая", "ReallyWorld", "Нейро");
+    private final ListSetting otvodkaMode = new ListSetting("Отводка", "Нет", "Плавная", "Камера");
+    private final NumberSetting range = new NumberSetting("Дистанция Атаки", 3.0, 1.0, 5.0, 0.1);
+    private final NumberSetting aimRange = new NumberSetting("Дистанция наводки", 3.0, 1.0, 7.0, 0.1);
+    private final BooleanSetting onlyCrits = new BooleanSetting("Только криты", true);
+    private final BooleanSetting smartCriticals = new BooleanSetting("Умные криты", false);
+    private final ListSetting throughWalls = new ListSetting("Через стены", "Нет", "Без обхода", "Через двери", "Обход RW", "Обход FT");
+    private final BooleanSetting aimCheck = new BooleanSetting("Проверка наводки", false);
+    private final BooleanSetting targetFollow = new BooleanSetting("Преследовать", true);
+    private final BooleanSetting onlyWithWeapon = new BooleanSetting("Только с оружием", false);
+    private final BooleanSetting swapMace = new BooleanSetting("Свап на булаву", false);
+    private final BooleanSetting noAttackOpenInv = new BooleanSetting("Не бить при открытом инве", true);
+    private final MultiListSetting targets = new MultiListSetting("Цели", "Игроки", "Животные", "Мобы", "Невидимые", "Голые", "Друзья", "Мертвые");
+    private final ListSetting sortMode = new ListSetting("Сортировка", "По дистанции", "По здоровью", "По полю зрения");
 
-    // Grim Settings
+    // Internal subsettings
     private final ListSetting grimAimPoint = new ListSetting("Точка Grim", "Rockstar", "Глаза", "Центр", "Случайная");
     private final NumberSetting grimSmooth = new NumberSetting("Плавность Grim", 1.0, 0.2, 2.0, 0.1);
-
-    // ReallyWorld Settings
     private final BooleanSetting rwFlick = new BooleanSetting("RW Flick", true);
     private final NumberSetting rwFlickHits = new NumberSetting("Flick каждые (ударов)", 50.0, 5.0, 150.0, 5.0);
     private final NumberSetting rwSpeed = new NumberSetting("Скорость RW", 1.1, 0.5, 2.5, 0.1);
     private final BooleanSetting rwJitter = new BooleanSetting("Jitter RW", true);
-
-    // Matrix Settings
     private final NumberSetting matrixSpeed = new NumberSetting("Скорость Matrix", 1.0, 0.2, 2.5, 0.1);
     private final BooleanSetting matrixJitter = new BooleanSetting("Jitter Matrix", true);
-
-    // HvH Settings
     private final NumberSetting hvhYawSpeed = new NumberSetting("Скорость Yaw HvH", 360.0, 60.0, 360.0, 10.0);
     private final NumberSetting hvhPitchSpeed = new NumberSetting("Скорость Pitch HvH", 180.0, 30.0, 180.0, 10.0);
-
-    // Legit Settings
     private final NumberSetting legitSpeed = new NumberSetting("Скорость", 6.0, 1.0, 20.0, 0.5);
     private final BooleanSetting legitPitch = new BooleanSetting("Управлять Pitch", true);
-
     private final CustomRotation customRotation = new CustomRotation();
     private final ListSetting moveCorrection = new ListSetting("Коррекция", "Незаметная", "Направленная", "Нет");
-    private final ListSetting sortMode = new ListSetting("Сортировка", "Дистанция", "Здоровье", "Угол обзора");
-    private final MultiListSetting targets = new MultiListSetting("Цели", "Игроки", "Животные", "Мобы", "Невидимые");
     private final MultiListSetting noAttackIf = new MultiListSetting("Не бить если", "Ешь еду", "Открыт инвентарь");
     private final BooleanSetting focusTarget = new BooleanSetting("Фокусировать одну цель", true);
-    private final BooleanSetting attackThroughWalls = new BooleanSetting("Бить через стены", true);
-    private final BooleanSetting smartCriticals = new BooleanSetting("Умные криты", false);
     private final ListSetting criticalSpeed = new ListSetting("Скорость критов", "Обычная", "С задержкой");
     private final ListSetting resetMode = new ListSetting("Сброс", "Silent", "ClientLook", "Нет");
     private final ListSetting sprintResetMode = new ListSetting("Сброс спринта", "Быстрый", "Легитный");
-
     private final ListSetting attackType = new ListSetting("\u0412\u0438\u0434 \u0443\u0434\u0430\u0440\u043e\u0432", "1.9", "1.8");
     private final NumberSetting clickCps = new NumberSetting("\u041a\u041f\u0421", 10.0, 1.0, 20.0, 1.0);
 
@@ -130,19 +119,26 @@ public class AttackAura extends Function {
     private boolean legitPitchInitialized;
 
     public AttackAura() {
-        rotationMode.runnable(this::updateRotationSettingsVisibility);
-        customRotation.bindVisibility(this::updateRotationSettingsVisibility);
-        attackType.runnable(this::updateAttackSettingsVisibility);
-        addSettings(rotationMode);
-        addSettings(grimAimPoint, grimSmooth);
-        addSettings(rwFlick, rwFlickHits, rwSpeed, rwJitter);
-        addSettings(matrixSpeed, matrixJitter);
-        addSettings(hvhYawSpeed, hvhPitchSpeed);
-        addSettings(legitSpeed, legitPitch);
-        addSettings(customRotation.settings());
-        addSettings(moveCorrection, sortMode, targets, range, aimRange, focusTarget, noAttackIf, attackThroughWalls, smartCriticals, criticalSpeed, resetMode, sprintResetMode, attackType, clickCps);
-        updateRotationSettingsVisibility();
-        updateAttackSettingsVisibility();
+        setKeybind(org.lwjgl.glfw.GLFW.GLFW_KEY_R);
+        rotationMode.setMode("Нейро");
+        otvodkaMode.setMode("Плавная");
+        targets.setEnabledOptions(java.util.Set.of("Игроки", "Животные", "Мобы", "Невидимые"));
+        addSettings(
+                rotationMode,     // 0 (L)
+                otvodkaMode,      // 1 (R)
+                range,            // 2 (L)
+                aimRange,         // 3 (R)
+                onlyCrits,        // 4 (L)
+                smartCriticals,   // 5 (R)
+                throughWalls,     // 6 (L)
+                aimCheck,         // 7 (R)
+                targetFollow,     // 8 (L)
+                onlyWithWeapon,   // 9 (R)
+                swapMace,         // 10 (L)
+                noAttackOpenInv,  // 11 (R)
+                targets,          // 12 (L)
+                sortMode          // 13 (R)
+        );
     }
 
     private void updateRotationSettingsVisibility() {
@@ -202,6 +198,7 @@ public class AttackAura extends Function {
         auraAttacking = false;
         RotationManager.setKeepClientRenderPitch(false);
         RotationManager.reset();
+        NeuroManager.enabled();
     }
 
     @Override
@@ -220,6 +217,7 @@ public class AttackAura extends Function {
         auraAttacking = false;
         RotationManager.setKeepClientRenderPitch(false);
         RotationManager.reset();
+        NeuroManager.targetNull();
     }
 
     @EventHandler
@@ -304,7 +302,7 @@ public class AttackAura extends Function {
         target = findTarget();
 
         if (target == null) {
-            NeuroManager.setAttackImminent(false);
+            NeuroManager.targetNull();
             lastAttackTargetId = -1;
             rwFlickUntil = 0L;
             customFlickUntil = 0L;
@@ -406,9 +404,9 @@ public class AttackAura extends Function {
 
     private double getTargetScore(LivingEntity entity) {
         double score;
-        if (sortMode.isEnabled("Здоровье")) {
+        if (sortMode.isEnabled("По здоровью") || sortMode.isEnabled("Здоровье")) {
             score = entity.getHealth() + entity.getAbsorptionAmount();
-        } else if (sortMode.isEnabled("Угол обзора")) {
+        } else if (sortMode.isEnabled("По полю зрения") || sortMode.isEnabled("Угол обзора")) {
             score = getFovToEntity(entity);
         } else {
             score = mc.player.squaredDistanceTo(entity);
@@ -906,7 +904,7 @@ public class AttackAura extends Function {
             return true;
         }
 
-        if (noAttackIf.isEnabled("Открыт инвентарь")
+        if ((noAttackIf.isEnabled("Открыт инвентарь") || noAttackOpenInv.isEnabled())
                 && mc.currentScreen instanceof InventoryScreen) {
             return true;
         }
@@ -926,7 +924,7 @@ public class AttackAura extends Function {
     }
 
     private boolean canAttackTargetThroughBlocks(LivingEntity entity) {
-        if (attackThroughWalls.isEnabled()) return true;
+        if (!throughWalls.isEnabled("Нет")) return true;
         if (mc.player.squaredDistanceTo(entity) > aimRange.getValue() * aimRange.getValue()) return true;
 
         return canSeePoint(entity.getEyePos())
@@ -1079,6 +1077,7 @@ public class AttackAura extends Function {
         }
 
         mc.interactionManager.attackEntity(mc.player, target);
+        NeuroManager.attack();
         mc.player.swingHand(net.minecraft.util.Hand.MAIN_HAND);
 
         if (criticalHitReady && sprintIntent) {

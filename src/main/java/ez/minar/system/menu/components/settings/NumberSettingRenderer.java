@@ -1,10 +1,12 @@
 package ez.minar.system.menu.components.settings;
 
-import ez.minar.system.menu.GuiTheme;
 import ez.minar.system.menu.ThemeManager;
 import ez.minar.system.settings.Setting;
 import ez.minar.system.settings.impl.NumberSetting;
+import ez.minar.utils.anim.AnimatedFloat;
+import ez.minar.utils.anim.Motion;
 import ez.minar.utils.render.RenderUtil;
+import ez.minar.utils.render.RockstarColors;
 import ez.minar.utils.render.msdf.Msdf;
 import net.minecraft.client.gui.DrawContext;
 
@@ -14,12 +16,12 @@ import java.util.Locale;
 import java.util.Map;
 
 public class NumberSettingRenderer implements SettingRenderer<NumberSetting> {
-    private static final float HEIGHT = 40f;
-    private static final float TRACK_HEIGHT = 4.5f;
-    private static final float KNOB_SIZE = 13f;
+    private static final float HEIGHT = 38f;
+    private static final float TRACK_HEIGHT = 4f;
+    private static final float KNOB_WIDTH = 10f;
+    private static final float KNOB_HEIGHT = 14f;
 
-    private final Map<NumberSetting, Float> animProgress = new HashMap<>();
-    private final Map<NumberSetting, Long> lastFrameTimes = new HashMap<>();
+    private final Map<NumberSetting, AnimatedFloat> animProgress = new HashMap<>();
 
     @Override
     public boolean supports(Setting setting) {
@@ -28,16 +30,15 @@ public class NumberSettingRenderer implements SettingRenderer<NumberSetting> {
 
     @Override
     public void render(DrawContext context, NumberSetting setting, SettingRendererContext rendererContext, float x, float y, float width, float scale, float opacity) {
-        float delta = updateDelta(setting);
         float targetProgress = getSettingProgress(setting);
-        float currentProgress = animProgress.getOrDefault(setting, targetProgress);
-        currentProgress = currentProgress + (targetProgress - currentProgress) * (1.0f - (float) Math.exp(-delta * 22.0f));
-        animProgress.put(setting, currentProgress);
+        AnimatedFloat anim = animProgress.computeIfAbsent(setting, s -> new AnimatedFloat(targetProgress, Motion.ROW));
+        anim.setTarget(targetProgress);
+        float currentProgress = Math.clamp(anim.getValue(), 0f, 1f);
 
-        float textSize = 10.5f * scale;
-        float valueTextSize = 10.5f * scale;
+        float textSize = 10f * scale;
+        float valueTextSize = 10f * scale;
         boolean hovered = rendererContext.isHovered(x, y, width, HEIGHT * scale);
-        Color labelColor = rendererContext.withOpacity(hovered ? new Color(255, 255, 255) : GuiTheme.TEXT_SETTING_LABEL, opacity);
+        Color labelColor = rendererContext.withOpacity(hovered ? Color.WHITE : RockstarColors.TEXT_SECONDARY, opacity);
 
         // Value text on right
         String valText = formatValue(setting);
@@ -49,47 +50,41 @@ public class NumberSettingRenderer implements SettingRenderer<NumberSetting> {
         if (Msdf.width(name, textSize) > maxLabelWidth) {
             name = rendererContext.trimToWidth(name, maxLabelWidth, textSize);
         }
-        RenderUtil.text(context, x, y + 1.5f * scale, name, textSize, labelColor);
-        RenderUtil.text(context, x + width - valTextWidth, y + 1.5f * scale,
-                valText, valueTextSize, rendererContext.withOpacity(GuiTheme.TEXT_VALUE, opacity));
+        RenderUtil.text(context, x, y + 1f * scale, name, textSize, labelColor);
+        RenderUtil.text(context, x + width - valTextWidth, y + 1f * scale,
+                valText, valueTextSize, rendererContext.withOpacity(ThemeManager.getThemeColor(), opacity));
 
         // Slider track
-        float trackY = y + 24f * scale;
+        float trackY = y + 23f * scale;
         float trackHeight = TRACK_HEIGHT * scale;
         float trackRadius = trackHeight / 2f;
-        Color trackBg = rendererContext.withOpacity(GuiTheme.TRACK_BG, opacity);
+        Color trackBg = rendererContext.withOpacity(new Color(30, 27, 36, 180), opacity);
         RenderUtil.rect(x, trackY, width, trackHeight, trackRadius, trackBg);
         RenderUtil.outline(x, trackY, width, trackHeight, trackRadius, 0.65f * scale,
                 rendererContext.withOpacity(new Color(255, 255, 255, 25), opacity));
 
         // Slider fill
-        float knobSize = KNOB_SIZE * scale;
         float fillWidth = Math.max(trackHeight, width * currentProgress);
         Color fillBg = rendererContext.withOpacity(ThemeManager.getThemeColor(), opacity);
         RenderUtil.rect(x, trackY, fillWidth, trackHeight, trackRadius, fillBg);
 
-        // Slider knob (glass styling with subtle shadow & outline)
-        float knobX = x + (width - knobSize) * currentProgress;
-        float knobY = trackY + (trackHeight - knobSize) / 2f;
-        float knobRadius = knobSize / 2f;
-        RenderUtil.shadow(knobX, knobY + 0.4f * scale, knobSize, knobSize, knobRadius, 2.5f * scale, 0.22f * opacity, 0.8f * scale,
+        // Slider thumb: Rockstar squircle / capsule pill
+        float knobW = KNOB_WIDTH * scale;
+        float knobH = KNOB_HEIGHT * scale;
+        float knobRadius = 3.5f * scale;
+        float knobX = x + (width - knobW) * currentProgress;
+        float knobY = trackY + (trackHeight - knobH) / 2f;
+
+        RenderUtil.shadow(knobX, knobY + 0.5f * scale, knobW, knobH, knobRadius, 3f * scale, 0.22f * opacity, 0.8f * scale,
                 new Color(0, 0, 0, 150));
-        RenderUtil.rect(knobX, knobY, knobSize, knobSize, knobRadius, rendererContext.withOpacity(Color.WHITE, opacity * 0.92f));
-        RenderUtil.fluidGlass(knobX, knobY, knobSize, knobSize, knobRadius, 0.35f, 0.28f * opacity,
-                rendererContext.withOpacity(ThemeManager.getThemeColor(), 0.20f * opacity));
-        RenderUtil.outline(knobX, knobY, knobSize, knobSize, knobRadius, 0.75f * scale,
+        RenderUtil.rect(knobX, knobY, knobW, knobH, knobRadius, rendererContext.withOpacity(Color.WHITE, opacity * 0.95f));
+        RenderUtil.fluidGlass(knobX, knobY, knobW, knobH, knobRadius, 0.35f, 0.28f * opacity,
+                rendererContext.withOpacity(ThemeManager.getThemeColor(), 0.22f * opacity));
+        RenderUtil.outline(knobX, knobY, knobW, knobH, knobRadius, 0.75f * scale,
                 rendererContext.withOpacity(new Color(255, 255, 255, 200), opacity * 0.85f),
                 rendererContext.withOpacity(ThemeManager.getThemeColor(), opacity * 0.5f),
                 rendererContext.withOpacity(ThemeManager.getThemeColor(), opacity * 0.3f),
                 rendererContext.withOpacity(new Color(255, 255, 255, 80), opacity * 0.65f));
-    }
-
-    private float updateDelta(NumberSetting setting) {
-        long now = System.currentTimeMillis();
-        long last = lastFrameTimes.getOrDefault(setting, now);
-        float delta = Math.min(50f, now - last) / 1000f;
-        lastFrameTimes.put(setting, now);
-        return delta;
     }
 
     private float getSettingProgress(NumberSetting setting) {
@@ -141,7 +136,8 @@ public class NumberSettingRenderer implements SettingRenderer<NumberSetting> {
         double steppedValue = Math.round(rawValue / step) * step;
         steppedValue = Math.clamp(steppedValue, min, max);
         setting.setValue(steppedValue);
-        animProgress.put(setting, progress);
+        AnimatedFloat anim = animProgress.computeIfAbsent(setting, s -> new AnimatedFloat(progress, Motion.ROW));
+        anim.setTarget(progress);
     }
 
     @Override

@@ -418,7 +418,7 @@
   "Detects bots via armor and inventory patterns": "Wykrywa boty na podstawie pancerza i ekwipunku",
   "Wykrywa boty na podstawie pancerza i ekwipunku": "Wykrywa boty na podstawie pancerza i ekwipunku",
   "module.attackaura.name": "AttackAura",
-  "AttackAura": "AttackAura",
+  "AttackAura": "Aura",
   "module.attackaura.desc": "Atakuje graczy i potwory w określonym zasięgu",
   "Атакует игроков и мобов в заданном радиусе": "Atakuje graczy i potwory w określonym zasięgu",
   "Attacks players and mobs in a specified radius": "Atakuje graczy i potwory w określonym zasięgu",
@@ -856,10 +856,10 @@
   "Stożkowy kapelusz na głowie gracza": "Stożkowy kapelusz na głowie gracza",
   "module.clickguisettings.name": "ClickGUI",
   "ClickGUI": "ClickGUI",
-  "module.clickguisettings.desc": "Styl interfejsu: Domyślny / Drop",
-  "Стиль интерфейса: Дефолт / Дроп": "Styl interfejsu: Domyślny / Drop",
-  "Interface style: Default / Drop": "Styl interfejsu: Domyślny / Drop",
-  "Styl interfejsu: Domyślny / Drop": "Styl interfejsu: Domyślny / Drop",
+  "module.clickguisettings.desc": "Kolor i skala interfejsu",
+  "Стиль интерфейса: Дефолт / Дроп": "Kolor i skala interfejsu",
+  "Interface style: Default / Drop": "Kolor i skala interfejsu",
+  "Styl interfejsu: Domyślny / Drop": "Kolor i skala interfejsu",
   "module.crosshair.name": "Crosshair",
   "Crosshair": "Crosshair",
   "module.crosshair.desc": "Niestandardowy celownik",
@@ -1562,5 +1562,6 @@
   "Эффекты": "Efekty",
   "Юзать феерверк": "Używaj fajerwerków",
   "Юзер": "Użytkownik",
-  "Яркость": "Jasność"
+  "Яркость": "Jasność",
+  "Цвет и масштаб интерфейса": "Kolor i skala interfejsu"
 }
